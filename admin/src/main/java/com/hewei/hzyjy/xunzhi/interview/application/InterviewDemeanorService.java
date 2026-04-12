@@ -7,6 +7,7 @@ import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
 import com.hewei.hzyjy.xunzhi.common.convention.exception.ClientException;
 import com.hewei.hzyjy.xunzhi.common.enums.InterviewErrorCodeEnum;
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.DemeanorEvaluationReqDTO;
+import com.hewei.hzyjy.xunzhi.interview.application.strategy.DemeanorNormalizationStrategy;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
 import com.hewei.hzyjy.xunzhi.toolkit.xunfei.XingChenAIClient;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +35,7 @@ public class InterviewDemeanorService {
     private final InterviewQuestionCacheService interviewQuestionCacheService;
     private final InterviewAiInvoker interviewAiInvoker;
     private final InterviewResponseParser interviewResponseParser;
+    private final DemeanorNormalizationStrategy demeanorNormalizationStrategy;
 
     public String evaluateDemeanor(DemeanorEvaluationReqDTO reqDTO) {
         String sessionId = null;
@@ -109,13 +111,27 @@ public class InterviewDemeanorService {
 
                 if (panicLevel != null && seriousnessLevel != null
                         && emoticonHandling != null && compositeScore != null) {
+                    boolean tenScaleDetected = demeanorNormalizationStrategy.isLikelyTenScale(
+                            panicLevel,
+                            seriousnessLevel,
+                            emoticonHandling,
+                            compositeScore
+                    );
+                    int normalizedPanic = demeanorNormalizationStrategy.normalize(panicLevel, tenScaleDetected);
+                    int normalizedSeriousness = demeanorNormalizationStrategy.normalize(seriousnessLevel, tenScaleDetected);
+                    int normalizedEmoticon = demeanorNormalizationStrategy.normalize(emoticonHandling, tenScaleDetected);
+                    int normalizedComposite = demeanorNormalizationStrategy.normalize(compositeScore, tenScaleDetected);
+
+                    if (tenScaleDetected) {
+                        log.info("Demeanor score detected as 0-10 scale, converted to 0-100, sessionId={}", sessionId);
+                    }
 
                     interviewQuestionCacheService.cacheDemeanorScoreDetails(
-                            sessionId, panicLevel, seriousnessLevel, emoticonHandling, compositeScore
+                            sessionId, normalizedPanic, normalizedSeriousness, normalizedEmoticon, normalizedComposite
                     );
-                    interviewQuestionCacheService.cacheDemeanorScore(sessionId, compositeScore);
+                    interviewQuestionCacheService.cacheDemeanorScore(sessionId, normalizedComposite);
                     log.info("Demeanor score success, sessionId={}, panic={}, seriousness={}, emoticon={}, composite={}",
-                            sessionId, panicLevel, seriousnessLevel, emoticonHandling, compositeScore);
+                            sessionId, normalizedPanic, normalizedSeriousness, normalizedEmoticon, normalizedComposite);
                     return "Demeanor evaluation completed";
                 }
 
@@ -143,4 +159,5 @@ public class InterviewDemeanorService {
         reqDTO.setAgentId(agentProperties.getId());
         return agentProperties;
     }
+
 }

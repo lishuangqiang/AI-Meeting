@@ -47,4 +47,13 @@ class InterviewResponseParserTest {
         assertEquals(74, parser.parseScoreFromResponse(result, "emoticonHandling"));
         assertEquals(79, parser.parseScoreFromResponse(result, "compositeScore"));
     }
+
+    @Test
+    void shouldParseDecimalScoreStringWithRounding() {
+        Map<String, Object> result = Map.of("score", "79.6");
+
+        Integer score = parser.parseScoreFromResponse(result, "score");
+
+        assertEquals(80, score);
+    }
 }

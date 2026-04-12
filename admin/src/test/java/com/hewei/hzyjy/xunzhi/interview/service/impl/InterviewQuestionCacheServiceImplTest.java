@@ -2,7 +2,9 @@ package com.hewei.hzyjy.xunzhi.interview.service.impl;
 
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.DemeanorScoreDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.RadarChartDTO;
+import com.hewei.hzyjy.xunzhi.interview.service.InterviewRadarService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionService;
+import com.hewei.hzyjy.xunzhi.interview.service.InterviewScoreService;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -17,13 +19,18 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class InterviewQuestionCacheServiceImplTest {
 
     @Test
     void shouldUseRollingAverageForInterviewScore() {
-        InterviewQuestionCacheServiceImpl service = createService(new ConcurrentHashMap<>());
+        InterviewScoreService scoreService = mock(InterviewScoreService.class);
+        when(scoreService.addSessionScore("session-1", 80)).thenReturn(80);
+        when(scoreService.addSessionScore("session-1", 60)).thenReturn(70);
+        when(scoreService.getSessionTotalScore(anyString(), org.mockito.ArgumentMatchers.anyList())).thenReturn(70);
+        InterviewQuestionCacheServiceImpl service = createService(new ConcurrentHashMap<>(), scoreService, mock(InterviewRadarService.class));
 
         assertEquals(80, service.addSessionScore("session-1", 80));
         assertEquals(70, service.addSessionScore("session-1", 60));
@@ -32,12 +39,22 @@ class InterviewQuestionCacheServiceImplTest {
 
     @Test
     void shouldBuildDeterministicWeightedRadarChart() {
-        InterviewQuestionCacheServiceImpl service = createService(new ConcurrentHashMap<>());
+        InterviewScoreService scoreService = mock(InterviewScoreService.class);
+        when(scoreService.getSessionTotalScore(anyString(), org.mockito.ArgumentMatchers.anyList())).thenReturn(70);
+        when(scoreService.getSessionDemeanorScore("session-2")).thenReturn(90);
+
+        InterviewRadarService radarService = mock(InterviewRadarService.class);
+        RadarChartDTO expectedChart = new RadarChartDTO();
+        expectedChart.setResumeScore(80);
+        expectedChart.setInterviewPerformance(70);
+        expectedChart.setDemeanorEvaluation(90);
+        expectedChart.setProfessionalSkills(73);
+        expectedChart.setPotentialIndex(77);
+        when(radarService.buildRadarChart(80, 70, 90)).thenReturn(expectedChart);
+
+        InterviewQuestionCacheServiceImpl service = createService(new ConcurrentHashMap<>(), scoreService, radarService);
 
         service.cacheResumeScore("session-2", 80);
-        service.addSessionScore("session-2", 80);
-        service.addSessionScore("session-2", 60);
-        service.cacheDemeanorScore("session-2", 90);
 
         RadarChartDTO radarChart = service.getRadarChartData("session-2");
 
@@ -46,13 +63,20 @@ class InterviewQuestionCacheServiceImplTest {
         assertEquals(90, radarChart.getDemeanorEvaluation());
         assertEquals(73, radarChart.getProfessionalSkills());
         assertEquals(77, radarChart.getPotentialIndex());
+        verify(radarService).buildRadarChart(80, 70, 90);
     }
 
     @Test
     void shouldKeepDemeanorDetailsInHundredPointScale() {
-        InterviewQuestionCacheServiceImpl service = createService(new ConcurrentHashMap<>());
+        InterviewScoreService scoreService = mock(InterviewScoreService.class);
+        DemeanorScoreDTO expected = new DemeanorScoreDTO();
+        expected.setPanicLevel(91);
+        expected.setSeriousnessLevel(84);
+        expected.setEmoticonHandling(77);
+        expected.setCompositeScore(88);
+        when(scoreService.getSessionDemeanorScoreDetails("session-3")).thenReturn(expected);
 
-        service.cacheDemeanorScoreDetails("session-3", 91, 84, 77, 88);
+        InterviewQuestionCacheServiceImpl service = createService(new ConcurrentHashMap<>(), scoreService, mock(InterviewRadarService.class));
 
         DemeanorScoreDTO details = service.getSessionDemeanorScoreDetails("session-3");
 
@@ -62,7 +86,10 @@ class InterviewQuestionCacheServiceImplTest {
         assertEquals(88, details.getCompositeScore());
     }
 
-    private InterviewQuestionCacheServiceImpl createService(Map<String, String> redisStore) {
+    private InterviewQuestionCacheServiceImpl createService(
+            Map<String, String> redisStore,
+            InterviewScoreService scoreService,
+            InterviewRadarService radarService) {
         StringRedisTemplate stringRedisTemplate = mock(StringRedisTemplate.class);
         @SuppressWarnings("unchecked")
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
@@ -94,6 +121,6 @@ class InterviewQuestionCacheServiceImplTest {
             return Long.valueOf(keys.size());
         }).when(stringRedisTemplate).delete(anyCollection());
 
-        return new InterviewQuestionCacheServiceImpl(stringRedisTemplate, interviewQuestionService);
+        return new InterviewQuestionCacheServiceImpl(stringRedisTemplate, interviewQuestionService, scoreService, radarService);
     }
 }

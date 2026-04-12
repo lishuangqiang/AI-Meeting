@@ -146,10 +146,10 @@ public class InterviewResponseParser {
         Object scoreObj = responseMap.get(scoreKey);
         Integer score;
         if (scoreObj instanceof Number) {
-            score = ((Number) scoreObj).intValue();
+            score = (int) Math.round(((Number) scoreObj).doubleValue());
         } else if (scoreObj instanceof String) {
             try {
-                score = Integer.parseInt((String) scoreObj);
+                score = (int) Math.round(Double.parseDouble(((String) scoreObj).trim()));
             } catch (NumberFormatException e) {
                 return null;
             }

@@ -1,14 +1,12 @@
 package com.hewei.hzyjy.xunzhi.interview.application;
 
 import cn.hutool.core.util.StrUtil;
-import com.hewei.hzyjy.xunzhi.agent.application.BusinessAgentResolver;
-import com.hewei.hzyjy.xunzhi.agent.application.BusinessAgentScene;
-import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.DemeanorEvaluationReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewAnswerReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewQuestionReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewAnswerRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewQuestionRespDTO;
+import com.hewei.hzyjy.xunzhi.interview.application.pipeline.InterviewAnswerPipeline;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewFlowState;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewTurnLog;
@@ -20,137 +18,30 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 面试主编排服务（纯主问题流程，不包含语音转写和追问分支）。
+ * 面试主编排服务（纯主问题流程，不包含语音转写和追问分支）�?
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class InterviewAgentOrchestrationService implements InterviewWorkflowService {
 
-    private final BusinessAgentResolver businessAgentResolver;
     private final InterviewQuestionCacheService interviewQuestionCacheService;
     private final InterviewQuestionExtractionService interviewQuestionExtractionService;
-    private final InterviewEvaluationService interviewEvaluationService;
     private final InterviewDemeanorService interviewDemeanorService;
-    private final InterviewResponseParser interviewResponseParser;
+    private final InterviewAnswerPipeline interviewAnswerPipeline;
 
     public InterviewQuestionRespDTO extractInterviewQuestions(InterviewQuestionReqDTO reqDTO) {
         return interviewQuestionExtractionService.extractInterviewQuestions(reqDTO);
     }
 
     /**
-     * 用户提交回答后的核心链路：
-     * 1) 读取当前主问题
-     * 2) 调评分官工作流评分
-     * 3) 推进到下一道主问题或结束
+     * 用户提交回答后的核心链路�?
+     * 1) 读取当前主问�?
+     * 2) 调评分官工作流评�?
+     * 3) 推进到下一道主问题或结�?
      */
     public InterviewAnswerRespDTO answerInterviewQuestion(String sessionId, InterviewAnswerReqDTO requestParam) {
-        InterviewAnswerRespDTO response = InterviewAnswerRespDTO.init();
-
-        if (StrUtil.isBlank(sessionId)) {
-            return response.fail("sessionId cannot be empty");
-        }
-        if (requestParam == null) {
-            return response.fail("request body cannot be empty");
-        }
-
-        try {
-            String requestId = requestParam.getRequestId();
-
-            // 幂等保护：同一个 requestId 重复提交时，只返回当前状态，不重复计分。
-            if (!interviewQuestionCacheService.markAnswerRequestProcessed(sessionId, requestId)) {
-                response.setTotalScore(interviewQuestionCacheService.getSessionTotalScore(sessionId));
-                fillNextQuestionFromFlow(sessionId, response);
-                if (StrUtil.isBlank(response.getErrorMessage())) {
-                    response.success();
-                }
-                return response;
-            }
-
-            InterviewFlowState flowState = ensureInterviewFlow(sessionId);
-            if (flowState == null) {
-                return response.fail("interview flow not initialized");
-            }
-            if (flowState.isCompleted()) {
-                response.setTotalScore(interviewQuestionCacheService.getSessionTotalScore(sessionId));
-                return response.finish().success();
-            }
-
-            int currentIndex = flowState.getCurrentIndex() == null ? 0 : flowState.getCurrentIndex();
-            String currentQuestionNumber = String.valueOf(currentIndex + 1);
-
-            String questionContent = interviewQuestionCacheService.getQuestionByNumber(sessionId, currentQuestionNumber);
-            if (StrUtil.isBlank(questionContent)) {
-                interviewQuestionCacheService.loadInterviewQuestionsFromDatabase(sessionId);
-                questionContent = interviewQuestionCacheService.getQuestionByNumber(sessionId, currentQuestionNumber);
-            }
-            if (StrUtil.isBlank(questionContent)) {
-                return response.fail("question does not exist or expired");
-            }
-            response.withCurrentQuestion(currentQuestionNumber, questionContent);
-
-            String answerContent = requestParam.getAnswerContent();
-            if (StrUtil.isBlank(answerContent)) {
-                return response.fail("answer content cannot be empty");
-            }
-
-            interviewQuestionCacheService.updateInterviewFlowStatus(sessionId, "EVALUATING");
-
-            AgentPropertiesDO agentProperties = businessAgentResolver.resolveRequired(
-                    BusinessAgentScene.INTERVIEW_ANSWER_EVALUATION);
-            if (agentProperties == null) {
-                return response.fail("agent configuration does not exist");
-            }
-
-            Map<String, Object> evaluationResult = interviewEvaluationService.evaluateAnswer(
-                    sessionId,
-                    requestId,
-                    currentQuestionNumber,
-                    questionContent,
-                    answerContent,
-                    agentProperties
-            );
-            if (evaluationResult == null) {
-                return response.fail("failed to parse evaluation result");
-            }
-
-            Integer score = interviewResponseParser.parseScoreFromResponse(evaluationResult, "score");
-            if (score == null) {
-                return response.fail("score missing in evaluation result");
-            }
-
-            Integer totalScore = interviewQuestionCacheService.addSessionScore(sessionId, score);
-            response.withEvaluation(score, interviewResponseParser.asString(evaluationResult.get("feedback")), totalScore);
-
-            // 无追问分支：评分后直接推进主问题序列。
-            InterviewFlowState nextFlow = interviewQuestionCacheService.advanceToNextQuestion(sessionId);
-            if (nextFlow == null || nextFlow.isCompleted()) {
-                interviewQuestionCacheService.markInterviewCompleted(sessionId);
-                response.finish().success();
-                appendInterviewTurn(
-                        sessionId, requestId, currentQuestionNumber, questionContent, answerContent, score, totalScore, response);
-                return response;
-            }
-
-            String nextQuestionNumber = String.valueOf(
-                    (nextFlow.getCurrentIndex() == null ? 0 : nextFlow.getCurrentIndex()) + 1);
-            String nextQuestion = interviewQuestionCacheService.getQuestionByNumber(sessionId, nextQuestionNumber);
-            if (StrUtil.isBlank(nextQuestion)) {
-                interviewQuestionCacheService.loadInterviewQuestionsFromDatabase(sessionId);
-                nextQuestion = interviewQuestionCacheService.getQuestionByNumber(sessionId, nextQuestionNumber);
-            }
-            if (StrUtil.isBlank(nextQuestion)) {
-                return response.fail("next question does not exist or expired");
-            }
-
-            response.withNextQuestion(nextQuestionNumber, nextQuestion, false, 0).success();
-            appendInterviewTurn(
-                    sessionId, requestId, currentQuestionNumber, questionContent, answerContent, score, totalScore, response);
-            return response;
-        } catch (Exception e) {
-            log.error("Failed to answer interview question, sessionId: {}", sessionId, e);
-            return response.fail("failed to process answer: " + e.getMessage());
-        }
+        return interviewAnswerPipeline.execute(sessionId, requestParam);
     }
 
     public InterviewAnswerRespDTO getNextQuestion(String sessionId) {
@@ -225,46 +116,6 @@ public class InterviewAgentOrchestrationService implements InterviewWorkflowServ
 
     public String evaluateDemeanor(DemeanorEvaluationReqDTO reqDTO) {
         return interviewDemeanorService.evaluateDemeanor(reqDTO);
-    }
-
-    private InterviewFlowState ensureInterviewFlow(String sessionId) {
-        InterviewFlowState state = interviewQuestionCacheService.getInterviewFlow(sessionId);
-        if (state != null) {
-            return state;
-        }
-
-        Map<String, String> questions = interviewQuestionCacheService.getSessionInterviewQuestions(sessionId);
-        if (questions == null || questions.isEmpty()) {
-            interviewQuestionCacheService.loadInterviewQuestionsFromDatabase(sessionId);
-            questions = interviewQuestionCacheService.getSessionInterviewQuestions(sessionId);
-        }
-        if (questions == null || questions.isEmpty()) {
-            return null;
-        }
-
-        interviewQuestionCacheService.initInterviewFlow(sessionId, questions.size());
-        return interviewQuestionCacheService.getInterviewFlow(sessionId);
-    }
-
-    private void fillNextQuestionFromFlow(String sessionId, InterviewAnswerRespDTO response) {
-        InterviewFlowState state = interviewQuestionCacheService.getInterviewFlow(sessionId);
-        if (state == null || state.isCompleted()) {
-            response.finish();
-            return;
-        }
-
-        String questionNumber = String.valueOf((state.getCurrentIndex() == null ? 0 : state.getCurrentIndex()) + 1);
-        String nextQuestion = interviewQuestionCacheService.getQuestionByNumber(sessionId, questionNumber);
-        if (StrUtil.isBlank(nextQuestion)) {
-            interviewQuestionCacheService.loadInterviewQuestionsFromDatabase(sessionId);
-            nextQuestion = interviewQuestionCacheService.getQuestionByNumber(sessionId, questionNumber);
-        }
-        if (StrUtil.isBlank(nextQuestion)) {
-            response.fail("question does not exist or expired");
-            return;
-        }
-
-        response.withNextQuestion(questionNumber, nextQuestion, false, 0);
     }
 
     private void fillCurrentQuestionResponse(
@@ -394,45 +245,6 @@ public class InterviewAgentOrchestrationService implements InterviewWorkflowServ
         return normalized;
     }
 
-    private void appendInterviewTurn(
-            String sessionId,
-            String requestId,
-            String questionNumber,
-            String questionContent,
-            String answerContent,
-            Integer score,
-            Integer totalScore,
-            InterviewAnswerRespDTO response) {
-        try {
-            InterviewTurnLog turn = InterviewTurnLog.builder()
-                    .timestamp(System.currentTimeMillis())
-                    .requestId(requestId)
-                    .questionNumber(questionNumber)
-                    .questionContent(questionContent)
-                    .answerContent(truncateForLog(answerContent, 1000))
-                    .score(score)
-                    .totalScore(totalScore)
-                    .feedback(response.getFeedback())
-                    .followUpNeeded(false)
-                    .isFollowUp(false)
-                    .followUpCount(0)
-                    .nextQuestionNumber(response.getNextQuestionNumber())
-                    .nextQuestion(response.getNextQuestion())
-                    .finished(response.getFinished())
-                    .build();
-            interviewQuestionCacheService.appendInterviewTurn(sessionId, turn);
-        } catch (Exception ex) {
-            log.warn("Failed to append interview turn, sessionId: {}", sessionId, ex);
-        }
-    }
-
-    private String truncateForLog(String value, int maxLength) {
-        if (value == null || value.length() <= maxLength) {
-            return value;
-        }
-        return value.substring(0, maxLength);
-    }
-
     private static final class CurrentQuestionState {
         private final boolean finished;
         private final String questionNumber;
@@ -461,3 +273,5 @@ public class InterviewAgentOrchestrationService implements InterviewWorkflowServ
         }
     }
 }
+
+
