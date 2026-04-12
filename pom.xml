@@ -183,7 +183,6 @@
                 <configuration>
                     <formats>
                         <format>
-                            <name>repo-metadata</name>
                             <includes>
                                 <include>*.md</include>
                                 <include>docs/**/*.md</include>
@@ -216,6 +215,7 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring-boot.version}</version>
             </plugin>
         </plugins>
     </build>
