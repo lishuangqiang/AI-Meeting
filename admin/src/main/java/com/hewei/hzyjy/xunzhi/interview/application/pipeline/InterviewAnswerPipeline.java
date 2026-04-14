@@ -44,6 +44,7 @@ public class InterviewAnswerPipeline {
     private final InterviewAnswerIdempotencyService interviewAnswerIdempotencyService;
     private final InterviewQuestionLockService interviewQuestionLockService;
     private final InterviewFollowUpRuleService interviewFollowUpRuleService;
+    private final InterviewTurnRepairService interviewTurnRepairService;
 
     public InterviewAnswerRespDTO execute(String sessionId, InterviewAnswerReqDTO requestParam) {
         InterviewAnswerPipelineContext ctx = new InterviewAnswerPipelineContext();
@@ -92,11 +93,11 @@ public class InterviewAnswerPipeline {
 
     private InterviewAnswerRespDTO finishAndReturn(InterviewAnswerPipelineContext ctx, boolean appendTurn) {
         if (Boolean.TRUE.equals(ctx.response.getIsSuccess())) {
+            if (appendTurn && !stepAppendTurnLog(ctx)) {
+                interviewTurnRepairService.enqueue(ctx.sessionId, ctx.turnLog, "append_failed_before_mark_succeeded");
+            }
             interviewAnswerIdempotencyService.markSucceeded(ctx.sessionId, ctx.requestId, ctx.response);
             ctx.idempotencyMarkedSucceeded = true;
-            if (appendTurn) {
-                stepAppendTurnLog(ctx);
-            }
         }
         return ctx.response;
     }
@@ -351,7 +352,7 @@ public class InterviewAnswerPipeline {
         return ctx.followUpRuleDecision;
     }
 
-    private void stepAppendTurnLog(InterviewAnswerPipelineContext ctx) {
+    private boolean stepAppendTurnLog(InterviewAnswerPipelineContext ctx) {
         try {
             InterviewTurnLog turn = InterviewTurnLog.builder()
                     .timestamp(System.currentTimeMillis())
@@ -369,9 +370,11 @@ public class InterviewAnswerPipeline {
                     .nextQuestion(ctx.response.getNextQuestion())
                     .finished(ctx.response.getFinished())
                     .build();
-            interviewQuestionCacheService.appendInterviewTurn(ctx.sessionId, turn);
+            ctx.turnLog = turn;
+            return interviewQuestionCacheService.appendInterviewTurnIfAbsent(ctx.sessionId, turn);
         } catch (Exception ex) {
             log.warn("Failed to append interview turn, sessionId: {}", ctx.sessionId, ex);
+            return false;
         }
     }
 
@@ -503,7 +506,8 @@ public class InterviewAnswerPipeline {
         if ("none".equalsIgnoreCase(normalized)
                 || "null".equalsIgnoreCase(normalized)
                 || "__FINISH__".equalsIgnoreCase(normalized)
-                || "无".equals(normalized)) {
+                || "N/A".equalsIgnoreCase(normalized)
+                || "-".equals(normalized)) {
             return null;
         }
         return normalized;
@@ -538,8 +542,10 @@ public class InterviewAnswerPipeline {
         private String followUpQuestion;
         private List<String> missingPoints;
         private InterviewFollowUpRuleDecision followUpRuleDecision;
+        private InterviewTurnLog turnLog;
         private boolean idempotencyStarted;
         private boolean idempotencyMarkedSucceeded;
         private RLock questionLock;
     }
 }
+

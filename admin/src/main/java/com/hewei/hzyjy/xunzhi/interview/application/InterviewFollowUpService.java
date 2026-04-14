@@ -182,13 +182,14 @@ public class InterviewFollowUpService {
             return null;
         }
         String normalized = question.trim();
-        if ("无".equals(normalized)
-                || "none".equalsIgnoreCase(normalized)
+        if ("none".equalsIgnoreCase(normalized)
                 || "null".equalsIgnoreCase(normalized)
+                || "N/A".equalsIgnoreCase(normalized)
+                || "-".equals(normalized)
                 || "__FINISH__".equalsIgnoreCase(normalized)) {
             return null;
         }
-        if (!normalized.endsWith("？") && !normalized.endsWith("?")) {
+        if (!normalized.endsWith("?") && !normalized.endsWith("？")) {
             normalized = normalized + "？";
         }
         return clip(normalized, 100);
@@ -241,3 +242,5 @@ public class InterviewFollowUpService {
         }
     }
 }
+
+

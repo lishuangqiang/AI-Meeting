@@ -14,15 +14,18 @@ import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewFlowState;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewTurnLog;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * 面试题缓存服务实现，负责面试题、建议、评分与流程状态的缓存读写。
@@ -86,13 +89,33 @@ public class InterviewQuestionCacheServiceImpl implements InterviewQuestionCache
      * 面试轮次日志缓存键前缀。
      */
     private static final String INTERVIEW_TURNS_KEY = "interview:turns:session:";
+    private static final String INTERVIEW_TURN_REQUEST_KEY = "interview:turn:req:session:";
 
     private static final int MAX_TURN_LOGS = 200;
+    private static final int FLOW_CAS_MAX_RETRIES = 5;
 
     private static final String FLOW_STATUS_INIT = "INIT";
     private static final String FLOW_STATUS_ASKING = "ASKING";
+    private static final String FLOW_STATUS_EVALUATING = "EVALUATING";
     private static final String FLOW_STATUS_FOLLOW_UP = "FOLLOW_UP";
     private static final String FLOW_STATUS_COMPLETED = "COMPLETED";
+
+    private static final String FLOW_CAS_UPDATE_SCRIPT_TEXT =
+            "local current = redis.call('HGET', KEYS[1], 'version') "
+                    + "if current == false then current = '0' end "
+                    + "if tostring(current) ~= tostring(ARGV[1]) then return 0 end "
+                    + "redis.call('HSET', KEYS[1], "
+                    + "'status', ARGV[2], "
+                    + "'currentIndex', ARGV[3], "
+                    + "'currentQuestionNumber', ARGV[4], "
+                    + "'totalQuestions', ARGV[5], "
+                    + "'followUpCount', ARGV[6], "
+                    + "'maxFollowUp', ARGV[7], "
+                    + "'version', ARGV[8]) "
+                    + "redis.call('EXPIRE', KEYS[1], tonumber(ARGV[9])) "
+                    + "return 1";
+
+    private static final DefaultRedisScript<Long> FLOW_CAS_UPDATE_SCRIPT = initFlowCasScript();
     
     /**
      * 缓存默认过期时间（小时）。
@@ -661,7 +684,7 @@ public class InterviewQuestionCacheServiceImpl implements InterviewQuestionCache
                 return null;
             }
             InterviewFlowState state = new InterviewFlowState();
-            state.setStatus(asString(entries.get("status"), FLOW_STATUS_INIT));
+            state.setStatus(normalizeFlowStatus(asString(entries.get("status"), FLOW_STATUS_INIT)));
             state.setCurrentIndex(asInt(entries.get("currentIndex"), 0));
             state.setCurrentQuestionNumber(asString(entries.get("currentQuestionNumber"), null));
             state.setTotalQuestions(asInt(entries.get("totalQuestions"), 0));
@@ -680,81 +703,56 @@ public class InterviewQuestionCacheServiceImpl implements InterviewQuestionCache
         if (StrUtil.isBlank(sessionId) || StrUtil.isBlank(status)) {
             return;
         }
-        InterviewFlowState state = getInterviewFlow(sessionId);
-        if (state == null) {
-            return;
-        }
-        state.setStatus(status);
-        state.setVersion((state.getVersion() == null ? 0 : state.getVersion()) + 1);
-        saveFlowState(sessionId, state);
+        mutateFlowState(sessionId, state -> state.setStatus(status));
     }
 
     @Override
     public InterviewFlowState incrementFollowUpCount(String sessionId) {
-        InterviewFlowState state = getInterviewFlow(sessionId);
-        if (state == null) {
-            return null;
-        }
-        state.setFollowUpCount((state.getFollowUpCount() == null ? 0 : state.getFollowUpCount()) + 1);
-        state.setStatus(FLOW_STATUS_FOLLOW_UP);
-        state.setVersion((state.getVersion() == null ? 0 : state.getVersion()) + 1);
-        saveFlowState(sessionId, state);
-        return state;
+        return mutateFlowState(sessionId, state -> {
+            state.setFollowUpCount((state.getFollowUpCount() == null ? 0 : state.getFollowUpCount()) + 1);
+            state.setStatus(FLOW_STATUS_FOLLOW_UP);
+        });
     }
 
     @Override
     public InterviewFlowState startFollowUpQuestion(String sessionId, String questionNumber) {
-        InterviewFlowState state = getInterviewFlow(sessionId);
-        if (state == null || StrUtil.isBlank(questionNumber)) {
+        if (StrUtil.isBlank(questionNumber)) {
             return null;
         }
-        state.setFollowUpCount((state.getFollowUpCount() == null ? 0 : state.getFollowUpCount()) + 1);
-        state.setStatus(FLOW_STATUS_FOLLOW_UP);
-        state.setCurrentQuestionNumber(questionNumber.trim());
-        state.setVersion((state.getVersion() == null ? 0 : state.getVersion()) + 1);
-        saveFlowState(sessionId, state);
-        return state;
+        return mutateFlowState(sessionId, state -> {
+            state.setFollowUpCount((state.getFollowUpCount() == null ? 0 : state.getFollowUpCount()) + 1);
+            state.setStatus(FLOW_STATUS_FOLLOW_UP);
+            state.setCurrentQuestionNumber(questionNumber.trim());
+        });
     }
 
     @Override
     public InterviewFlowState advanceToNextQuestion(String sessionId) {
-        InterviewFlowState state = getInterviewFlow(sessionId);
-        if (state == null) {
-            return null;
-        }
+        return mutateFlowState(sessionId, state -> {
+            int currentIndex = state.getCurrentIndex() == null ? 0 : state.getCurrentIndex();
+            int totalQuestions = state.getTotalQuestions() == null ? 0 : state.getTotalQuestions();
+            int nextIndex = currentIndex + 1;
+            state.setFollowUpCount(0);
 
-        int currentIndex = state.getCurrentIndex() == null ? 0 : state.getCurrentIndex();
-        int totalQuestions = state.getTotalQuestions() == null ? 0 : state.getTotalQuestions();
-        int nextIndex = currentIndex + 1;
-        state.setFollowUpCount(0);
-
-        if (totalQuestions <= 0 || nextIndex >= totalQuestions) {
-            state.setStatus(FLOW_STATUS_COMPLETED);
-            state.setCurrentIndex(Math.max(currentIndex, 0));
-            state.setCurrentQuestionNumber(null);
-        } else {
-            state.setCurrentIndex(nextIndex);
-            state.setStatus(FLOW_STATUS_ASKING);
-            state.setCurrentQuestionNumber(String.valueOf(nextIndex + 1));
-        }
-
-        state.setVersion((state.getVersion() == null ? 0 : state.getVersion()) + 1);
-        saveFlowState(sessionId, state);
-        return state;
+            if (totalQuestions <= 0 || nextIndex >= totalQuestions) {
+                state.setStatus(FLOW_STATUS_COMPLETED);
+                state.setCurrentIndex(Math.max(currentIndex, 0));
+                state.setCurrentQuestionNumber(null);
+            } else {
+                state.setCurrentIndex(nextIndex);
+                state.setStatus(FLOW_STATUS_ASKING);
+                state.setCurrentQuestionNumber(String.valueOf(nextIndex + 1));
+            }
+        });
     }
 
     @Override
     public InterviewFlowState markInterviewCompleted(String sessionId) {
-        InterviewFlowState state = getInterviewFlow(sessionId);
-        if (state == null) {
-            return null;
-        }
-        state.setStatus(FLOW_STATUS_COMPLETED);
-        state.setCurrentQuestionNumber(null);
-        state.setFollowUpCount(0);
-        state.setVersion((state.getVersion() == null ? 0 : state.getVersion()) + 1);
-        saveFlowState(sessionId, state);
-        return state;
+        return mutateFlowState(sessionId, state -> {
+            state.setStatus(FLOW_STATUS_COMPLETED);
+            state.setCurrentQuestionNumber(null);
+            state.setFollowUpCount(0);
+        });
     }
 
     @Override
@@ -775,23 +773,33 @@ public class InterviewQuestionCacheServiceImpl implements InterviewQuestionCache
 
     @Override
     public void appendInterviewTurn(String sessionId, InterviewTurnLog turnData) {
+        appendInterviewTurnInternal(sessionId, turnData);
+    }
+
+    @Override
+    public boolean appendInterviewTurnIfAbsent(String sessionId, InterviewTurnLog turnData) {
         if (StrUtil.isBlank(sessionId) || turnData == null) {
-            return;
+            return false;
         }
+        String requestId = turnData.getRequestId();
+        if (StrUtil.isBlank(requestId)) {
+            return appendInterviewTurnInternal(sessionId, turnData);
+        }
+        String requestKey = INTERVIEW_TURN_REQUEST_KEY + sessionId;
         try {
-            String cacheKey = INTERVIEW_TURNS_KEY + sessionId;
-            String payload = JSON.toJSONString(turnData);
-            stringRedisTemplate.opsForList().rightPush(cacheKey, payload);
-
-            Long size = stringRedisTemplate.opsForList().size(cacheKey);
-            if (size != null && size > MAX_TURN_LOGS) {
-                long start = size - MAX_TURN_LOGS;
-                stringRedisTemplate.opsForList().trim(cacheKey, start, -1);
+            Long added = stringRedisTemplate.opsForSet().add(requestKey, requestId);
+            stringRedisTemplate.expire(requestKey, CACHE_EXPIRE_HOURS, TimeUnit.HOURS);
+            if (added == null || added <= 0) {
+                return true;
             }
-
-            stringRedisTemplate.expire(cacheKey, CACHE_EXPIRE_HOURS, TimeUnit.HOURS);
+            if (appendInterviewTurnInternal(sessionId, turnData)) {
+                return true;
+            }
+            stringRedisTemplate.opsForSet().remove(requestKey, requestId);
+            return false;
         } catch (Exception e) {
-            log.error("Failed to append interview turn, sessionId: {}", sessionId, e);
+            log.error("Failed to append interview turn idempotently, sessionId: {}", sessionId, e);
+            return false;
         }
     }
 
@@ -829,18 +837,107 @@ public class InterviewQuestionCacheServiceImpl implements InterviewQuestionCache
         }
     }
 
+    private boolean appendInterviewTurnInternal(String sessionId, InterviewTurnLog turnData) {
+        if (StrUtil.isBlank(sessionId) || turnData == null) {
+            return false;
+        }
+        try {
+            String cacheKey = INTERVIEW_TURNS_KEY + sessionId;
+            String payload = JSON.toJSONString(turnData);
+            stringRedisTemplate.opsForList().rightPush(cacheKey, payload);
+
+            Long size = stringRedisTemplate.opsForList().size(cacheKey);
+            if (size != null && size > MAX_TURN_LOGS) {
+                long start = size - MAX_TURN_LOGS;
+                stringRedisTemplate.opsForList().trim(cacheKey, start, -1);
+            }
+
+            stringRedisTemplate.expire(cacheKey, CACHE_EXPIRE_HOURS, TimeUnit.HOURS);
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to append interview turn, sessionId: {}", sessionId, e);
+            return false;
+        }
+    }
+
+    private InterviewFlowState mutateFlowState(String sessionId, Consumer<InterviewFlowState> mutator) {
+        if (StrUtil.isBlank(sessionId) || mutator == null) {
+            return null;
+        }
+        for (int retry = 0; retry < FLOW_CAS_MAX_RETRIES; retry++) {
+            InterviewFlowState state = getInterviewFlow(sessionId);
+            if (state == null) {
+                return null;
+            }
+            Integer expectedVersion = state.getVersion() == null ? 0 : Math.max(state.getVersion(), 0);
+            mutator.accept(state);
+            state.setVersion(expectedVersion + 1);
+            if (saveFlowStateWithCas(sessionId, expectedVersion, state)) {
+                return state;
+            }
+        }
+        log.warn("Flow CAS update retries exhausted, sessionId={}", sessionId);
+        return getInterviewFlow(sessionId);
+    }
+
     private void saveFlowState(String sessionId, InterviewFlowState state) {
         String cacheKey = INTERVIEW_FLOW_KEY + sessionId;
+        Map<String, String> payload = buildFlowPayload(state);
+        stringRedisTemplate.opsForHash().putAll(cacheKey, payload);
+        stringRedisTemplate.expire(cacheKey, CACHE_EXPIRE_HOURS, TimeUnit.HOURS);
+    }
+
+    private boolean saveFlowStateWithCas(String sessionId, Integer expectedVersion, InterviewFlowState state) {
+        String cacheKey = INTERVIEW_FLOW_KEY + sessionId;
+        Map<String, String> payload = buildFlowPayload(state);
+        Long result = stringRedisTemplate.execute(
+                FLOW_CAS_UPDATE_SCRIPT,
+                Collections.singletonList(cacheKey),
+                String.valueOf(expectedVersion == null ? 0 : expectedVersion),
+                payload.get("status"),
+                payload.get("currentIndex"),
+                payload.get("currentQuestionNumber"),
+                payload.get("totalQuestions"),
+                payload.get("followUpCount"),
+                payload.get("maxFollowUp"),
+                payload.get("version"),
+                String.valueOf(TimeUnit.HOURS.toSeconds(CACHE_EXPIRE_HOURS))
+        );
+        return result != null && result > 0;
+    }
+
+    private Map<String, String> buildFlowPayload(InterviewFlowState state) {
         Map<String, String> payload = new HashMap<>();
-        payload.put("status", asString(state.getStatus(), FLOW_STATUS_INIT));
+        payload.put("status", normalizeFlowStatus(asString(state.getStatus(), FLOW_STATUS_INIT)));
         payload.put("currentIndex", String.valueOf(state.getCurrentIndex() == null ? 0 : state.getCurrentIndex()));
         payload.put("currentQuestionNumber", asString(state.getCurrentQuestionNumber(), ""));
         payload.put("totalQuestions", String.valueOf(state.getTotalQuestions() == null ? 0 : state.getTotalQuestions()));
         payload.put("followUpCount", String.valueOf(state.getFollowUpCount() == null ? 0 : state.getFollowUpCount()));
         payload.put("maxFollowUp", String.valueOf(state.getMaxFollowUp() == null ? 2 : state.getMaxFollowUp()));
         payload.put("version", String.valueOf(state.getVersion() == null ? 1 : state.getVersion()));
-        stringRedisTemplate.opsForHash().putAll(cacheKey, payload);
-        stringRedisTemplate.expire(cacheKey, CACHE_EXPIRE_HOURS, TimeUnit.HOURS);
+        return payload;
+    }
+
+    private String normalizeFlowStatus(String status) {
+        if (StrUtil.isBlank(status)) {
+            return FLOW_STATUS_INIT;
+        }
+        String normalized = status.trim().toUpperCase();
+        if (FLOW_STATUS_INIT.equals(normalized)
+                || FLOW_STATUS_ASKING.equals(normalized)
+                || FLOW_STATUS_EVALUATING.equals(normalized)
+                || FLOW_STATUS_FOLLOW_UP.equals(normalized)
+                || FLOW_STATUS_COMPLETED.equals(normalized)) {
+            return normalized;
+        }
+        return FLOW_STATUS_INIT;
+    }
+
+    private static DefaultRedisScript<Long> initFlowCasScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setScriptText(FLOW_CAS_UPDATE_SCRIPT_TEXT);
+        script.setResultType(Long.class);
+        return script;
     }
 
     private Integer asInt(Object value, Integer defaultValue) {

@@ -2,7 +2,6 @@ package com.hewei.hzyjy.xunzhi.common.biz.user;
 
 import com.alibaba.fastjson2.JSON;
 import com.hewei.hzyjy.xunzhi.common.config.user.UserFlowRiskControlConfiguration;
-import com.hewei.hzyjy.xunzhi.common.convention.exception.ClientException;
 import com.hewei.hzyjy.xunzhi.common.convention.result.Results;
 import com.hewei.hzyjy.xunzhi.common.ratelimit.RequestRateLimitKeyResolver;
 import com.hewei.hzyjy.xunzhi.common.ratelimit.RequestRateLimitPolicy;
@@ -20,14 +19,14 @@ import lombok.extern.slf4j.Slf4j;
 import java.io.IOException;
 import java.io.PrintWriter;
 
-import static com.hewei.hzyjy.xunzhi.common.convention.errorcode.BaseErrorCode.FLOW_LIMIT_ERROR;
-
 /**
  * Global request rate-limit filter.
  */
 @Slf4j
 @RequiredArgsConstructor
 public class UserFlowRiskControlFilter implements Filter {
+    private static final String FLOW_LIMIT_ERROR_CODE = "A000300";
+    private static final String FLOW_LIMIT_ERROR_MESSAGE = "当前系统繁忙，请稍后再试";
 
     private final UserFlowRiskControlConfiguration userFlowRiskControlConfiguration;
     private final RequestRateLimitService requestRateLimitService;
@@ -48,14 +47,14 @@ public class UserFlowRiskControlFilter implements Filter {
             allowed = requestRateLimitService.tryAcquire(key, policy);
         } catch (Throwable ex) {
             log.error("Request rate limiting failed, key={}, bucket={}", key, policy.bucketName(), ex);
-            writeFailure((HttpServletResponse) response);
+            writeFailure((HttpServletResponse) response, policy.timeWindowSeconds());
             return;
         }
 
         if (!allowed) {
             log.warn("Request rejected by rate limiter, key={}, bucket={}, uri={}",
                     key, policy.bucketName(), httpRequest.getRequestURI());
-            writeFailure((HttpServletResponse) response);
+            writeFailure((HttpServletResponse) response, policy.timeWindowSeconds());
             return;
         }
 
@@ -66,13 +65,13 @@ public class UserFlowRiskControlFilter implements Filter {
                 aiAllowed = requestRateLimitService.tryAcquire(key, aiPolicy);
             } catch (Throwable ex) {
                 log.error("AI bucket rate limiting failed, key={}, bucket={}", key, aiPolicy.bucketName(), ex);
-                writeFailure((HttpServletResponse) response);
+                writeFailure((HttpServletResponse) response, aiPolicy.timeWindowSeconds());
                 return;
             }
             if (!aiAllowed) {
                 log.warn("Request rejected by AI bucket limiter, key={}, bucket={}, uri={}",
                         key, aiPolicy.bucketName(), httpRequest.getRequestURI());
-                writeFailure((HttpServletResponse) response);
+                writeFailure((HttpServletResponse) response, aiPolicy.timeWindowSeconds());
                 return;
             }
         }
@@ -88,11 +87,14 @@ public class UserFlowRiskControlFilter implements Filter {
                 .anyMatch(requestUri::startsWith);
     }
 
-    private void writeFailure(HttpServletResponse response) throws IOException {
+    private void writeFailure(HttpServletResponse response, long retryAfterSeconds) throws IOException {
         response.setCharacterEncoding("UTF-8");
         response.setContentType("application/json; charset=utf-8");
+        //这个版本暂时没有429状态码，只能手写
+        response.setStatus(429);
+        response.setHeader("Retry-After", String.valueOf(Math.max(1L, retryAfterSeconds)));
         try (PrintWriter writer = response.getWriter()) {
-            writer.print(JSON.toJSONString(Results.failure(new ClientException(FLOW_LIMIT_ERROR))));
+            writer.print(JSON.toJSONString(Results.failure(FLOW_LIMIT_ERROR_CODE, FLOW_LIMIT_ERROR_MESSAGE)));
         }
     }
 }

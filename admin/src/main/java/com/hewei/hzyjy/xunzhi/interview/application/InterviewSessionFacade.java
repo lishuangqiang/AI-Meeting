@@ -2,7 +2,6 @@ package com.hewei.hzyjy.xunzhi.interview.application;
 
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.metadata.IPage;
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hewei.hzyjy.xunzhi.agent.api.io.resp.AgentMessageHistoryRespDTO;
 import com.hewei.hzyjy.xunzhi.common.convention.exception.ClientException;
 import com.hewei.hzyjy.xunzhi.common.enums.InterviewErrorCodeEnum;
@@ -29,7 +28,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -55,7 +53,7 @@ public class InterviewSessionFacade {
 
     public List<AgentMessageHistoryRespDTO> getConversationHistory(String sessionId, Long userId) {
         interviewSessionService.requireOwnedSession(sessionId, userId);
-        return Collections.emptyList();
+        throw new ClientException("interview history is not enabled", InterviewErrorCodeEnum.INTERVIEW_SESSION_INVALID_STATE);
     }
 
     public IPage<AgentMessageHistoryRespDTO> pageHistoryMessages(
@@ -66,10 +64,7 @@ public class InterviewSessionFacade {
         if (StrUtil.isNotBlank(sessionId)) {
             interviewSessionService.requireOwnedSession(sessionId, userId);
         }
-        Page<AgentMessageHistoryRespDTO> page = new Page<>(current, size);
-        page.setTotal(0);
-        page.setRecords(Collections.emptyList());
-        return page;
+        throw new ClientException("interview history paging is not enabled", InterviewErrorCodeEnum.INTERVIEW_SESSION_INVALID_STATE);
     }
 
     public void finishSession(String sessionId, Long userId) {

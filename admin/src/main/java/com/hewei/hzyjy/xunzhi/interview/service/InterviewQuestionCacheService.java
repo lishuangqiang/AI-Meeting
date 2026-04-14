@@ -264,6 +264,14 @@ public interface InterviewQuestionCacheService {
     void appendInterviewTurn(String sessionId, InterviewTurnLog turnData);
 
     /**
+     * Append one interview turn log once by requestId.
+     * @param sessionId session id
+     * @param turnData turn payload
+     * @return true when append succeeded or duplicated by the same requestId
+     */
+    boolean appendInterviewTurnIfAbsent(String sessionId, InterviewTurnLog turnData);
+
+    /**
      * List interview turn logs from cache.
      * @param sessionId session id
      * @return turn log list

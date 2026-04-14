@@ -16,6 +16,10 @@ public class InterviewAiSingleFlightConfiguration {
 
     private Long ttlMillis = 4000L;
 
+    private Long waitTimeoutMillis = 5000L;
+
+    private Integer cleanupThreshold = 256;
+
     private Long heavyLockExpireSeconds = 45L;
 
     private Long heavyLockWaitMillis = 0L;

@@ -49,7 +49,7 @@ spring:
         thread-name-prefix: redis-session-async-
   ai:
     openai:
-      api-key: ${SPRING_AI_OPENAI_API_KEY:sk-db221a65d3aa42d99453d1d9bb2ef8c3}
+      api-key: ${SPRING_AI_OPENAI_API_KEY:}
       base-url: ${SPRING_AI_OPENAI_BASE_URL:https://api.openai.com}
       chat:
         options:
@@ -88,6 +88,8 @@ xunfei:
     rta-api-key: ${XUNFEI_RTA_API_KEY:}
 
 xunzhi-agent:
+  security:
+    require-xunfei-secrets: true
   storage:
     base-dir: ${XUNZHI_STORAGE_BASE_DIR:${user.home}/.xunzhi-agent}
     upload-temp-dir: ${XUNZHI_MULTIPART_TEMP_DIR:${xunzhi-agent.storage.base-dir}/temp/upload}
@@ -170,14 +172,23 @@ xunzhi-agent:
   ai-singleflight:
     enable: true
     ttl-millis: 4000
+    wait-timeout-millis: 5000
+    cleanup-threshold: 256
     heavy-lock-expire-seconds: 45
     heavy-lock-wait-millis: 0
   interview:
     answer-guard:
-      lock-expire-seconds: 120
+      lock-expire-seconds: -1
+      lock-watchdog-enabled: true
       processing-expire-seconds: 120
+      processing-long-tail-expire-seconds: 300
       replay-expire-hours: 24
       lock-wait-millis: 0
+    turn-repair:
+      enable: true
+      fixed-delay-millis: 3000
+      batch-size: 50
+      max-retries: 6
   redis-session:
     enable: true
     message-expire-seconds: 604800

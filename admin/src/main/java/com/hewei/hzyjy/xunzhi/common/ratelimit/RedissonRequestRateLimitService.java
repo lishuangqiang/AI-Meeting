@@ -26,15 +26,24 @@ public class RedissonRequestRateLimitService implements RequestRateLimitService 
         String bucketName = (effectivePolicy.bucketName() == null || effectivePolicy.bucketName().isBlank())
                 ? "default"
                 : effectivePolicy.bucketName().trim();
-        RRateLimiter limiter = redissonClient.getRateLimiter(resolveKeyPrefix() + ":" + bucketName + ":" + key);
+        String limiterKey = resolveKeyPrefix() + ":" + bucketName + ":" + key;
+        RRateLimiter limiter = redissonClient.getRateLimiter(limiterKey);
+        ensureLimiterConfigured(limiter, effectivePolicy);
+        return limiter.tryAcquire(effectivePolicy.requestedTokens());
+    }
+
+    private void ensureLimiterConfigured(RRateLimiter limiter, RequestRateLimitPolicy policy) {
+        Boolean exists = limiter.isExists();
+        if (Boolean.TRUE.equals(exists)) {
+            return;
+        }
         limiter.trySetRate(
                 RateType.OVERALL,
-                effectivePolicy.maxAccessCount(),
-                effectivePolicy.timeWindowSeconds(),
+                policy.maxAccessCount(),
+                policy.timeWindowSeconds(),
                 RateIntervalUnit.SECONDS
         );
-        limiter.expire(resolveExpirationSeconds(effectivePolicy.timeWindowSeconds()), TimeUnit.SECONDS);
-        return limiter.tryAcquire(effectivePolicy.requestedTokens());
+        limiter.expire(resolveExpirationSeconds(policy.timeWindowSeconds()), TimeUnit.SECONDS);
     }
 
     private long resolveExpirationSeconds(long timeWindowSeconds) {

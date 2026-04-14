@@ -1,6 +1,7 @@
 package com.hewei.hzyjy.xunzhi.interview.application;
 
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.crypto.digest.DigestUtil;
 import com.hewei.hzyjy.xunzhi.agent.application.BusinessAgentResolver;
 import com.hewei.hzyjy.xunzhi.agent.application.BusinessAgentScene;
 import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
@@ -153,7 +154,10 @@ public class InterviewQuestionExtractionService {
             InterviewQuestionRespDTO response,
             String fullContent) {
         try {
-            log.info("Start parsing interview question response, raw={}", fullContent);
+            log.info("Start parsing interview question response, sessionId={}, payloadLength={}, payloadHash={}",
+                    reqDTO.getSessionId(),
+                    fullContent == null ? 0 : fullContent.length(),
+                    digestForLog(fullContent));
 
             String workflowErrorMessage = interviewResponseParser.extractWorkflowErrorMessage(fullContent);
             if (StrUtil.isNotBlank(workflowErrorMessage)) {
@@ -164,7 +168,10 @@ public class InterviewQuestionExtractionService {
             }
 
             String extractedContent = interviewResponseParser.extractContentFromInterviewResponse(fullContent);
-            log.info("Extracted content={}", extractedContent);
+            log.info("Extracted interview content summary, sessionId={}, contentLength={}, contentHash={}",
+                    reqDTO.getSessionId(),
+                    extractedContent == null ? 0 : extractedContent.length(),
+                    digestForLog(extractedContent));
             if (StrUtil.isBlank(extractedContent)) {
                 response.setErrorMessage("interview question response content is blank");
                 return false;
@@ -263,6 +270,13 @@ public class InterviewQuestionExtractionService {
 
     private List<String> normalizeStringList(Object value) {
         return interviewResponseParser.asStringList(value);
+    }
+
+    private String digestForLog(String value) {
+        if (StrUtil.isBlank(value)) {
+            return "-";
+        }
+        return DigestUtil.sha256Hex(value).substring(0, 16);
     }
 
     private Map<String, Object> buildResumeContext(Map<String, Object> responseMap) {

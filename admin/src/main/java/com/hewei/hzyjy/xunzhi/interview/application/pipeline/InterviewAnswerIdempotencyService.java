@@ -87,7 +87,10 @@ public class InterviewAnswerIdempotencyService {
 
     private long resolveProcessingExpireSeconds() {
         Long configured = configuration.getProcessingExpireSeconds();
-        return configured == null || configured <= 0 ? 120L : configured;
+        long base = configured == null || configured <= 0 ? 120L : configured;
+        Long longTail = configuration.getProcessingLongTailExpireSeconds();
+        long guard = longTail == null || longTail <= 0 ? base : longTail;
+        return Math.max(base, guard);
     }
 
     private long resolveReplayExpireHours() {

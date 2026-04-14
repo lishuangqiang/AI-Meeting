@@ -8,11 +8,13 @@ import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewAnswerRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewQuestionRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.application.flow.InterviewFlowStateMachine;
 import com.hewei.hzyjy.xunzhi.interview.application.pipeline.InterviewAnswerPipeline;
+import com.hewei.hzyjy.xunzhi.interview.application.pipeline.InterviewQuestionLockService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewFlowState;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewTurnLog;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -31,6 +33,7 @@ public class InterviewAgentOrchestrationService implements InterviewWorkflowServ
     private final InterviewDemeanorService interviewDemeanorService;
     private final InterviewAnswerPipeline interviewAnswerPipeline;
     private final InterviewFlowStateMachine interviewFlowStateMachine;
+    private final InterviewQuestionLockService interviewQuestionLockService;
 
     public InterviewQuestionRespDTO extractInterviewQuestions(InterviewQuestionReqDTO reqDTO) {
         return interviewQuestionExtractionService.extractInterviewQuestions(reqDTO);
@@ -202,32 +205,44 @@ public class InterviewAgentOrchestrationService implements InterviewWorkflowServ
         if (StrUtil.isBlank(sessionId) || StrUtil.isBlank(questionNumber) || totalQuestions <= 0) {
             return null;
         }
-        InterviewFlowState existingFlowState = interviewQuestionCacheService.getInterviewFlow(sessionId);
-        if (existingFlowState != null) {
-            return existingFlowState;
-        }
+        RLock lock = null;
+        try {
+            lock = interviewQuestionLockService.acquire(sessionId, questionNumber);
+            if (lock == null) {
+                return interviewQuestionCacheService.getInterviewFlow(sessionId);
+            }
+            InterviewFlowState existingFlowState = interviewQuestionCacheService.getInterviewFlow(sessionId);
+            if (existingFlowState != null) {
+                return existingFlowState;
+            }
 
-        interviewQuestionCacheService.initInterviewFlow(sessionId, totalQuestions);
-        Integer mainQuestionNo = extractMainQuestionNo(questionNumber);
-        if (mainQuestionNo == null || mainQuestionNo <= 0) {
+            interviewQuestionCacheService.initInterviewFlow(sessionId, totalQuestions);
+            Integer mainQuestionNo = extractMainQuestionNo(questionNumber);
+            if (mainQuestionNo == null || mainQuestionNo <= 0) {
+                return interviewQuestionCacheService.getInterviewFlow(sessionId);
+            }
+
+            int targetMainQuestionNo = Math.min(mainQuestionNo, totalQuestions);
+            for (int currentMainQuestionNo = 1; currentMainQuestionNo < targetMainQuestionNo; currentMainQuestionNo++) {
+                InterviewFlowState advancedFlow = interviewFlowStateMachine.advanceMainQuestion(sessionId);
+                if (advancedFlow == null || interviewFlowStateMachine.isCompleted(advancedFlow)) {
+                    return advancedFlow;
+                }
+            }
+
+            if (isFollowUpQuestion(questionNumber)) {
+                int followUpCount = extractFollowUpCount(questionNumber);
+                for (int index = 0; index < followUpCount; index++) {
+                    interviewFlowStateMachine.startFollowUpQuestion(sessionId, questionNumber);
+                }
+            }
             return interviewQuestionCacheService.getInterviewFlow(sessionId);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            return interviewQuestionCacheService.getInterviewFlow(sessionId);
+        } finally {
+            interviewQuestionLockService.release(lock);
         }
-
-        int targetMainQuestionNo = Math.min(mainQuestionNo, totalQuestions);
-        for (int currentMainQuestionNo = 1; currentMainQuestionNo < targetMainQuestionNo; currentMainQuestionNo++) {
-            InterviewFlowState advancedFlow = interviewFlowStateMachine.advanceMainQuestion(sessionId);
-            if (advancedFlow == null || interviewFlowStateMachine.isCompleted(advancedFlow)) {
-                return advancedFlow;
-            }
-        }
-
-        if (isFollowUpQuestion(questionNumber)) {
-            int followUpCount = extractFollowUpCount(questionNumber);
-            for (int index = 0; index < followUpCount; index++) {
-                interviewFlowStateMachine.startFollowUpQuestion(sessionId, questionNumber);
-            }
-        }
-        return interviewQuestionCacheService.getInterviewFlow(sessionId);
     }
 
     private String matchQuestionNumberByContent(String sessionId, String questionContent, Map<String, String> questions) {

@@ -13,6 +13,9 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
@@ -65,8 +68,11 @@ public class InterviewAiSingleFlightService {
         meterRegistry.counter("ai_singleflight_hit_total").increment();
         try {
             @SuppressWarnings("unchecked")
-            T reused = (T) entry.resultFuture.get();
+            T reused = (T) entry.resultFuture.get(resolveWaitTimeoutMillis(), TimeUnit.MILLISECONDS);
             return reused;
+        } catch (TimeoutException ex) {
+            flights.remove(key, entry);
+            throw new CompletionException(new RejectedExecutionException("single-flight wait timeout", ex));
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             throw new CompletionException(ex);
@@ -87,8 +93,15 @@ public class InterviewAiSingleFlightService {
         return configured != null && configured > 0 ? configured : 4000L;
     }
 
+    private long resolveWaitTimeoutMillis() {
+        Long configured = configuration.getWaitTimeoutMillis();
+        return configured != null && configured > 0 ? configured : 5000L;
+    }
+
     private void cleanupExpired(long nowMillis) {
-        if (flights.size() < 256) {
+        Integer configured = configuration.getCleanupThreshold();
+        int threshold = configured != null && configured > 0 ? configured : 256;
+        if (flights.size() < threshold) {
             return;
         }
         flights.entrySet().removeIf(entry -> entry.getValue().expireAtMillis <= nowMillis);

@@ -26,11 +26,12 @@ public class InterviewQuestionLockService {
             return null;
         }
         RLock lock = redissonClient.getLock(lockKey(sessionId, questionNumber));
-        boolean acquired = lock.tryLock(
-                resolveWaitMillis(),
-                resolveExpireSeconds(),
-                TimeUnit.SECONDS
-        );
+        boolean acquired;
+        if (useWatchdogLock()) {
+            acquired = lock.tryLock(resolveWaitMillis(), -1L, TimeUnit.MILLISECONDS);
+        } else {
+            acquired = lock.tryLock(resolveWaitMillis(), resolveExpireMillis(), TimeUnit.MILLISECONDS);
+        }
         return acquired ? lock : null;
     }
 
@@ -44,13 +45,19 @@ public class InterviewQuestionLockService {
         return LOCK_KEY_PREFIX + sessionId + ":" + questionNumber;
     }
 
-    private long resolveExpireSeconds() {
+    private long resolveExpireMillis() {
         Long configured = configuration.getLockExpireSeconds();
-        return configured == null || configured <= 0 ? 120L : configured;
+        long seconds = configured == null || configured <= 0 ? 120L : configured;
+        return TimeUnit.SECONDS.toMillis(seconds);
     }
 
     private long resolveWaitMillis() {
         Long configured = configuration.getLockWaitMillis();
         return configured == null || configured < 0 ? 0L : configured;
+    }
+
+    private boolean useWatchdogLock() {
+        return Boolean.TRUE.equals(configuration.getLockWatchdogEnabled())
+                && (configuration.getLockExpireSeconds() == null || configuration.getLockExpireSeconds() <= 0);
     }
 }

@@ -1,6 +1,7 @@
 package com.hewei.hzyjy.xunzhi.interview.application;
 
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.crypto.digest.DigestUtil;
 import com.hewei.hzyjy.xunzhi.agent.application.BusinessAgentResolver;
 import com.hewei.hzyjy.xunzhi.agent.application.BusinessAgentScene;
 import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
@@ -98,7 +99,10 @@ public class InterviewDemeanorService {
                     interviewAiInvoker.buildSingleFlightKey(InterviewAiGuardStage.INTERVIEW_DEMEANOR, reqDTO.getSessionId(), imageUrl)
             );
 
-            log.info("Raw demeanor response: {}", aiResponseStr);
+            log.info("Demeanor response received, sessionId={}, payloadLength={}, payloadHash={}",
+                    reqDTO.getSessionId(),
+                    aiResponseStr == null ? 0 : aiResponseStr.length(),
+                    digestForLog(aiResponseStr));
             sessionId = reqDTO.getSessionId();
             String workflowErrorMessage = interviewResponseParser.extractWorkflowErrorMessage(aiResponseStr);
             if (StrUtil.isNotBlank(workflowErrorMessage)) {
@@ -113,7 +117,7 @@ public class InterviewDemeanorService {
                         KEY_EMOTICON_HANDLING,
                         KEY_COMPOSITE_SCORE
                 );
-                log.info("Parsed demeanor content map: {}", contentMap);
+                log.info("Parsed demeanor content keys: {}", contentMap == null ? null : contentMap.keySet());
 
                 if (contentMap == null || contentMap.isEmpty()) {
                     log.error("Missing structured result in demeanor response");
@@ -157,8 +161,8 @@ public class InterviewDemeanorService {
             } catch (ClientException ce) {
                 throw ce;
             } catch (Exception parseException) {
-                log.error("Failed to parse demeanor response, raw={}, error={}",
-                        aiResponseStr, parseException.getMessage(), parseException);
+                log.error("Failed to parse demeanor response, sessionId={}, payloadHash={}, error={}",
+                        sessionId, digestForLog(aiResponseStr), parseException.getMessage(), parseException);
                 throw new ClientException(InterviewErrorCodeEnum.DEMEANOR_AI_RESPONSE_PARSE_ERROR);
             }
 
@@ -172,6 +176,13 @@ public class InterviewDemeanorService {
         } finally {
             interviewAiSessionLockService.release(heavyLock);
         }
+    }
+
+    private String digestForLog(String payload) {
+        if (StrUtil.isBlank(payload)) {
+            return "-";
+        }
+        return DigestUtil.sha256Hex(payload).substring(0, 16);
     }
 
     private AgentPropertiesDO resolveRequiredAgent(DemeanorEvaluationReqDTO reqDTO) {

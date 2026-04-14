@@ -12,6 +12,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -59,7 +60,8 @@ class UserFlowRiskControlFilterTest {
 
         filter.doFilter(request, response, filterChain);
 
-//        verify(filterChain, never()).doFilter(request, response);
+        assertEquals(429, response.getStatus());
+        assertEquals("1", response.getHeader("Retry-After"));
         assertTrue(response.getContentAsString().contains("\"code\":\"A000300\""));
     }
 

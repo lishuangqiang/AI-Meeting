@@ -106,7 +106,7 @@ public class ThreadPoolConfig {
                 TimeUnit.SECONDS,
                 new LinkedBlockingQueue<>(queueCapacity),
                 threadFactory,
-                new ThreadPoolExecutor.CallerRunsPolicy()
+                resolveRejectPolicy(poolName)
         ) {
             @Override
             protected void afterExecute(Runnable runnable, Throwable throwable) {
@@ -124,6 +124,21 @@ public class ThreadPoolConfig {
 
     private int positive(Integer value, int defaultValue) {
         return value != null && value > 0 ? value : defaultValue;
+    }
+
+    private ThreadPoolExecutor.AbortPolicy abortPolicy() {
+        return new ThreadPoolExecutor.AbortPolicy();
+    }
+
+    private ThreadPoolExecutor.CallerRunsPolicy callerRunsPolicy() {
+        return new ThreadPoolExecutor.CallerRunsPolicy();
+    }
+
+    private java.util.concurrent.RejectedExecutionHandler resolveRejectPolicy(String poolName) {
+        if ("interview-ai-io".equals(poolName)) {
+            return abortPolicy();
+        }
+        return callerRunsPolicy();
     }
 
     private String normalizePrefix(String value, String defaultValue) {
