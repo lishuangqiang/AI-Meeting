@@ -1,7 +1,11 @@
 package com.hewei.hzyjy.xunzhi.interview.application;
 
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.crypto.digest.DigestUtil;
 import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.AiCallGuardService;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardStage;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiSingleFlightService;
 import com.hewei.hzyjy.xunzhi.toolkit.xunfei.XingChenAIClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -9,39 +13,108 @@ import org.springframework.stereotype.Component;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 @Component
 @RequiredArgsConstructor
-/**
- * 面试 AI 调用器：
- * 对 XingChen 的 chat 调用做统一封装，业务层只关心传参与结果。
-*/
 public class InterviewAiInvoker {
 
     private final XingChenAIClient xingChenAIClient;
+    private final AiCallGuardService aiCallGuardService;
+    private final InterviewAiSingleFlightService interviewAiSingleFlightService;
 
     public String callAiSync(String prompt, String sessionId, AgentPropertiesDO agentProperties) throws Exception {
-        // 纯文本同步调用（无附件、无额外参数）。
-        return doChat(prompt, sessionId, agentProperties, null, null);
+        String key = buildSingleFlightKey(InterviewAiGuardStage.INTERVIEW_EVALUATION, sessionId, null, prompt);
+        return callAiSync(prompt, sessionId, agentProperties, InterviewAiGuardStage.INTERVIEW_EVALUATION, key);
     }
 
-    // 带附件 URL 的同步调用（例如简历、图片）。
+    public String callAiSync(
+            String prompt,
+            String sessionId,
+            AgentPropertiesDO agentProperties,
+            String stage,
+            String singleFlightKey) throws Exception {
+        return guardedCall(stage, singleFlightKey, () -> doChat(prompt, sessionId, agentProperties, null, null));
+    }
+
     public String callAiSyncWithFile(
             String prompt,
             String sessionId,
             AgentPropertiesDO agentProperties,
             String fileUrl) throws Exception {
-        return doChat(prompt, sessionId, agentProperties, fileUrl, null);
+        String key = buildSingleFlightKey(InterviewAiGuardStage.INTERVIEW_DEMEANOR, sessionId, fileUrl);
+        return callAiSyncWithFile(prompt, sessionId, agentProperties, fileUrl, InterviewAiGuardStage.INTERVIEW_DEMEANOR, key);
     }
 
-    // 带 parameters 的同步调用，常用于工作流节点变量透传。
+    public String callAiSyncWithFile(
+            String prompt,
+            String sessionId,
+            AgentPropertiesDO agentProperties,
+            String fileUrl,
+            String stage,
+            String singleFlightKey) throws Exception {
+        return guardedCall(stage, singleFlightKey, () -> doChat(prompt, sessionId, agentProperties, fileUrl, null));
+    }
+
     public String callAiSyncWithParameters(
             String sessionId,
             AgentPropertiesDO agentProperties,
             Map<String, Object> parameters) throws Exception {
         Object rawInput = parameters == null ? null : parameters.get("AGENT_USER_INPUT");
         String input = rawInput == null ? "" : rawInput.toString().trim();
-        return doChat(StrUtil.blankToDefault(input, ""), sessionId, agentProperties, null, parameters);
+        String key = buildSingleFlightKey(InterviewAiGuardStage.INTERVIEW_EVALUATION, sessionId, null, input);
+        return callAiSyncWithParameters(
+                sessionId,
+                agentProperties,
+                parameters,
+                InterviewAiGuardStage.INTERVIEW_EVALUATION,
+                key
+        );
+    }
+
+    public String callAiSyncWithParameters(
+            String sessionId,
+            AgentPropertiesDO agentProperties,
+            Map<String, Object> parameters,
+            String stage,
+            String singleFlightKey) throws Exception {
+        Object rawInput = parameters == null ? null : parameters.get("AGENT_USER_INPUT");
+        String input = rawInput == null ? "" : rawInput.toString().trim();
+        return guardedCall(
+                stage,
+                singleFlightKey,
+                () -> doChat(StrUtil.blankToDefault(input, ""), sessionId, agentProperties, null, parameters)
+        );
+    }
+
+    public String buildSingleFlightKey(
+            String stage,
+            String sessionId,
+            String questionNumber,
+            String answerContent) {
+        String safeStage = StrUtil.blankToDefault(stage, "interview-default");
+        String safeSessionId = StrUtil.blankToDefault(StrUtil.trimToEmpty(sessionId), "no-session");
+        String safeQuestionNumber = StrUtil.blankToDefault(StrUtil.trimToEmpty(questionNumber), "-");
+        String safeAnswerHash = StrUtil.isBlank(answerContent)
+                ? "-"
+                : DigestUtil.sha256Hex(answerContent.trim()).substring(0, 16);
+        return safeStage + "|" + safeSessionId + "|" + safeQuestionNumber + "|" + safeAnswerHash;
+    }
+
+    public String buildSingleFlightKey(String stage, String sessionId, String businessKey) {
+        String safeStage = StrUtil.blankToDefault(stage, "interview-default");
+        String safeSessionId = StrUtil.blankToDefault(StrUtil.trimToEmpty(sessionId), "no-session");
+        String safeBusinessKey = StrUtil.blankToDefault(StrUtil.trimToEmpty(businessKey), "-");
+        return safeStage + "|" + safeSessionId + "|" + safeBusinessKey;
+    }
+
+    private String guardedCall(String stage, String singleFlightKey, Callable<String> callable) throws Exception {
+        String safeStage = StrUtil.blankToDefault(stage, "interview-default");
+        String key = StrUtil.blankToDefault(singleFlightKey, safeStage + "|no-key");
+        return interviewAiSingleFlightService.execute(
+                key,
+                () -> aiCallGuardService.execute(safeStage, key, callable)
+        );
     }
 
     private String doChat(
@@ -50,7 +123,6 @@ public class InterviewAiInvoker {
             AgentPropertiesDO agentProperties,
             String fileUrl,
             Map<String, Object> parameters) throws Exception {
-        // 通过 outputStream 收集完整返回文本（非流式）。
         StringBuilder aiResponse = new StringBuilder();
         xingChenAIClient.chat(
                 input,

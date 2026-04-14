@@ -1,11 +1,13 @@
 package com.hewei.hzyjy.xunzhi.media.application;
 
 import com.hewei.hzyjy.xunzhi.media.infrastructure.websocket.AudioTranscriptionWebSocketHandler;
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 
 /**
  * Application service for websocket session status and server-side push.
@@ -13,6 +15,9 @@ import java.util.concurrent.CompletableFuture;
 @Slf4j
 @Service
 public class WebSocketMessageService {
+
+    @Resource(name = "queryExecutor")
+    private ExecutorService queryExecutor;
 
     public boolean sendMessageToUser(String userId, String type, String message, String data) {
         try {
@@ -25,7 +30,7 @@ public class WebSocketMessageService {
     }
 
     public CompletableFuture<Boolean> sendMessageToUserAsync(String userId, String type, String message, String data) {
-        return CompletableFuture.supplyAsync(() -> sendMessageToUser(userId, type, message, data));
+        return CompletableFuture.supplyAsync(() -> sendMessageToUser(userId, type, message, data), queryExecutor);
     }
 
     public boolean isUserOnline(String userId) {
@@ -58,6 +63,6 @@ public class WebSocketMessageService {
     }
 
     public CompletableFuture<Void> sendMessageToUsersAsync(Set<String> userIds, String type, String message, String data) {
-        return CompletableFuture.runAsync(() -> sendMessageToUsers(userIds, type, message, data));
+        return CompletableFuture.runAsync(() -> sendMessageToUsers(userIds, type, message, data), queryExecutor);
     }
 }

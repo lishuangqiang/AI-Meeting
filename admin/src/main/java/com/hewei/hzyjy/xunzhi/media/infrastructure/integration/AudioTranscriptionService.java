@@ -4,6 +4,7 @@ import cn.xfyun.config.SparkIatModelEnum;
 import com.hewei.hzyjy.xunzhi.common.config.storage.ApplicationStorageProperties;
 import com.hewei.hzyjy.xunzhi.common.convention.exception.ClientException;
 import com.hewei.hzyjy.xunzhi.toolkit.xunfei.SparkIatUtil;
+import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -14,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.function.Consumer;
 
 /**
@@ -26,6 +28,8 @@ public class AudioTranscriptionService {
 
     private final SparkIatUtil sparkIatUtil;
     private final ApplicationStorageProperties storageProperties;
+    @Resource(name = "cpuComputeExecutor")
+    private ExecutorService cpuComputeExecutor;
 
     public CompletableFuture<String> transcribeAsync(MultipartFile audioFile,
                                                      Consumer<String> partialResultCallback) {
@@ -36,7 +40,7 @@ public class AudioTranscriptionService {
                 log.error("Async audio transcription failed", ex);
                 throw new RuntimeException("Audio transcription failed: " + ex.getMessage(), ex);
             }
-        });
+        }, cpuComputeExecutor);
     }
 
     public String transcribeAudio(MultipartFile audioFile) throws Exception {

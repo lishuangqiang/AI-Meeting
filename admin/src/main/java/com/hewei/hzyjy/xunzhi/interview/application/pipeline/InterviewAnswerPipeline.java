@@ -11,12 +11,14 @@ import com.hewei.hzyjy.xunzhi.interview.application.InterviewEvaluationService;
 import com.hewei.hzyjy.xunzhi.interview.application.InterviewFollowUpService;
 import com.hewei.hzyjy.xunzhi.interview.application.InterviewResponseParser;
 import com.hewei.hzyjy.xunzhi.interview.application.flow.InterviewFlowStateMachine;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardException;
 import com.hewei.hzyjy.xunzhi.interview.application.rule.InterviewFollowUpRuleContext;
 import com.hewei.hzyjy.xunzhi.interview.application.rule.InterviewFollowUpRuleDecision;
 import com.hewei.hzyjy.xunzhi.interview.application.rule.InterviewFollowUpRuleService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewFlowState;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewTurnLog;
+import io.micrometer.core.instrument.Metrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
@@ -73,10 +75,12 @@ public class InterviewAnswerPipeline {
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             log.warn("Interrupted while executing interview answer pipeline, sessionId: {}", sessionId);
+            recordAnswerPipelineFailure("interrupted");
             ctx.response.fail("interview answer request interrupted");
             return ctx.response;
         } catch (Exception ex) {
             log.error("Failed to execute interview answer pipeline, sessionId: {}", sessionId, ex);
+            recordAnswerPipelineFailure("unexpected_exception");
             return ctx.response.fail("failed to process answer: " + ex.getMessage());
         } finally {
             interviewQuestionLockService.release(ctx.questionLock);
@@ -137,6 +141,7 @@ public class InterviewAnswerPipeline {
             case SUCCEEDED -> {
                 InterviewAnswerRespDTO replayResponse = tryStartResult.getReplayResponse();
                 if (replayResponse != null) {
+                    Metrics.counter("idempotency_replay_hit_total").increment();
                     ctx.response = replayResponse;
                     return false;
                 }
@@ -161,6 +166,8 @@ public class InterviewAnswerPipeline {
     private boolean stepAcquireQuestionLock(InterviewAnswerPipelineContext ctx) throws InterruptedException {
         RLock questionLock = interviewQuestionLockService.acquire(ctx.sessionId, ctx.requestParam.getQuestionNumber());
         if (questionLock == null) {
+            Metrics.counter("question_lock_contention_total").increment();
+            recordAnswerPipelineFailure("question_lock_contention");
             ctx.response.fail(QUESTION_LOCK_MESSAGE);
             return false;
         }
@@ -205,25 +212,35 @@ public class InterviewAnswerPipeline {
 
         AgentPropertiesDO agentProperties = businessAgentResolver.resolveRequired(BusinessAgentScene.INTERVIEW_ANSWER_EVALUATION);
         if (agentProperties == null) {
+            recordAnswerPipelineFailure("agent_config_missing");
             ctx.response.fail("agent configuration does not exist");
             return false;
         }
 
-        Map<String, Object> evaluationResult = interviewEvaluationService.evaluateAnswer(
-                ctx.sessionId,
-                ctx.requestId,
-                ctx.currentQuestionNumber,
-                ctx.currentQuestion,
-                ctx.requestParam.getAnswerContent(),
-                agentProperties
-        );
+        Map<String, Object> evaluationResult;
+        try {
+            evaluationResult = interviewEvaluationService.evaluateAnswer(
+                    ctx.sessionId,
+                    ctx.requestId,
+                    ctx.currentQuestionNumber,
+                    ctx.currentQuestion,
+                    ctx.requestParam.getAnswerContent(),
+                    agentProperties
+            );
+        } catch (InterviewAiGuardException guardException) {
+            recordAnswerPipelineFailure("ai_guard_" + guardException.getErrorCode().name().toLowerCase());
+            ctx.response.fail(guardException.getMessage());
+            return false;
+        }
         if (evaluationResult == null) {
+            recordAnswerPipelineFailure("evaluation_parse_failed");
             ctx.response.fail("failed to parse evaluation result");
             return false;
         }
 
         Integer score = interviewResponseParser.parseScoreFromResponse(evaluationResult, "score");
         if (score == null) {
+            recordAnswerPipelineFailure("evaluation_score_missing");
             ctx.response.fail("score missing in evaluation result");
             return false;
         }
@@ -497,6 +514,11 @@ public class InterviewAnswerPipeline {
             return value;
         }
         return value.substring(0, maxLength);
+    }
+
+    private void recordAnswerPipelineFailure(String reason) {
+        String safeReason = StrUtil.isBlank(reason) ? "unknown" : reason.trim();
+        Metrics.counter("answer_pipeline_fail_total", "reason", safeReason).increment();
     }
 
     private static final class InterviewAnswerPipelineContext {

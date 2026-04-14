@@ -12,6 +12,7 @@ import com.hewei.hzyjy.xunzhi.common.config.storage.ApplicationStorageProperties
 import com.hewei.hzyjy.xunzhi.common.config.xunfei.XunfeiLatProperties;
 import com.hewei.hzyjy.xunzhi.common.convention.exception.ClientException;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.OkHttpClient;
@@ -37,6 +38,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -58,6 +60,8 @@ public class XunfeiAudioService {
 
     private final XunfeiLatProperties xunfeiLatPropertiesConfig;
     private final ApplicationStorageProperties storageProperties;
+    @Resource(name = "queryExecutor")
+    private ExecutorService queryExecutor;
 
     private IatClient iatClient;
 
@@ -181,7 +185,10 @@ public class XunfeiAudioService {
         WS_CLIENT.newWebSocket(request, new WebSocketListener() {
             @Override
             public void onOpen(WebSocket webSocket, Response response) {
-                CompletableFuture.runAsync(() -> sendAudioStream(webSocket, audioInputStream, sessionId, future));
+                CompletableFuture.runAsync(
+                        () -> sendAudioStream(webSocket, audioInputStream, sessionId, future),
+                        queryExecutor
+                );
             }
 
             @Override

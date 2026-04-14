@@ -3,8 +3,9 @@ package com.hewei.hzyjy.xunzhi.interview.application;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.fastjson2.JSON;
 import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardException;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardStage;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
-import com.hewei.hzyjy.xunzhi.toolkit.xunfei.AgentPropertiesLoader;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -73,8 +74,22 @@ public class InterviewEvaluationService {
                     questionContent, answerContent
             );
             try {
-                String aiResponse = interviewAiInvoker.callAiSync(evaluationPrompt, sessionId, scorerAgent);
+                String singleFlightKey = interviewAiInvoker.buildSingleFlightKey(
+                        InterviewAiGuardStage.INTERVIEW_EVALUATION,
+                        sessionId,
+                        questionNumber,
+                        answerContent
+                ) + "|fallback";
+                String aiResponse = interviewAiInvoker.callAiSync(
+                        evaluationPrompt,
+                        sessionId,
+                        scorerAgent,
+                        InterviewAiGuardStage.INTERVIEW_EVALUATION,
+                        singleFlightKey
+                );
                 evaluationResult = interviewResponseParser.parseEvaluationResult(aiResponse);
+            } catch (InterviewAiGuardException ex) {
+                throw ex;
             } catch (Exception ex) {
                 log.warn("Prompt fallback evaluation failed, sessionId: {}", sessionId, ex);
                 return null;
@@ -114,9 +129,21 @@ public class InterviewEvaluationService {
             );
 
             String workflowResponse = interviewAiInvoker.callAiSyncWithParameters(
-                    sessionId + "_score", scorerAgent, parameters);
+                    sessionId + "_score",
+                    scorerAgent,
+                    parameters,
+                    InterviewAiGuardStage.INTERVIEW_EVALUATION,
+                    interviewAiInvoker.buildSingleFlightKey(
+                            InterviewAiGuardStage.INTERVIEW_EVALUATION,
+                            sessionId,
+                            questionNumber,
+                            answerContent
+                    )
+            );
             Map<String, Object> parsed = interviewResponseParser.parseEvaluationResult(workflowResponse);
             return normalizeScorerResult(parsed);
+        } catch (InterviewAiGuardException ex) {
+            throw ex;
         } catch (Exception ex) {
             log.warn("Scorer workflow invocation failed, sessionId: {}", sessionId, ex);
             return null;

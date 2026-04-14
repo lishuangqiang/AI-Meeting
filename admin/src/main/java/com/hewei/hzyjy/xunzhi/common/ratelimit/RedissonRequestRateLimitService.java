@@ -21,32 +21,37 @@ public class RedissonRequestRateLimitService implements RequestRateLimitService 
     private final UserFlowRiskControlConfiguration configuration;
 
     @Override
-    public boolean tryAcquire(String key) {
-        RRateLimiter limiter = redissonClient.getRateLimiter(resolveKeyPrefix() + ":" + key);
+    public boolean tryAcquire(String key, RequestRateLimitPolicy policy) {
+        RequestRateLimitPolicy effectivePolicy = policy != null ? policy : resolveDefaultPolicy();
+        String bucketName = (effectivePolicy.bucketName() == null || effectivePolicy.bucketName().isBlank())
+                ? "default"
+                : effectivePolicy.bucketName().trim();
+        RRateLimiter limiter = redissonClient.getRateLimiter(resolveKeyPrefix() + ":" + bucketName + ":" + key);
         limiter.trySetRate(
                 RateType.OVERALL,
-                resolveMaxAccessCount(),
-                resolveTimeWindowSeconds(),
+                effectivePolicy.maxAccessCount(),
+                effectivePolicy.timeWindowSeconds(),
                 RateIntervalUnit.SECONDS
         );
-        limiter.expire(resolveExpirationSeconds(), TimeUnit.SECONDS);
-        return limiter.tryAcquire(resolveRequestedTokens());
+        limiter.expire(resolveExpirationSeconds(effectivePolicy.timeWindowSeconds()), TimeUnit.SECONDS);
+        return limiter.tryAcquire(effectivePolicy.requestedTokens());
     }
 
-    private long resolveExpirationSeconds() {
-        return Math.max(resolveTimeWindowSeconds() * 2, 60L);
+    private long resolveExpirationSeconds(long timeWindowSeconds) {
+        return Math.max(timeWindowSeconds * 2, 60L);
     }
 
-    private long resolveTimeWindowSeconds() {
-        return configuration.getTimeWindowSeconds() != null ? configuration.getTimeWindowSeconds() : 1L;
-    }
-
-    private long resolveMaxAccessCount() {
-        return configuration.getMaxAccessCount() != null ? configuration.getMaxAccessCount() : 20L;
-    }
-
-    private long resolveRequestedTokens() {
-        return configuration.getRequestedTokens() != null ? configuration.getRequestedTokens() : 1L;
+    private RequestRateLimitPolicy resolveDefaultPolicy() {
+        long maxAccessCount = configuration.getMaxAccessCount() != null && configuration.getMaxAccessCount() > 0
+                ? configuration.getMaxAccessCount()
+                : 20L;
+        long timeWindowSeconds = configuration.getTimeWindowSeconds() != null && configuration.getTimeWindowSeconds() > 0
+                ? configuration.getTimeWindowSeconds()
+                : 1L;
+        long requestedTokens = configuration.getRequestedTokens() != null && configuration.getRequestedTokens() > 0
+                ? configuration.getRequestedTokens()
+                : 1L;
+        return new RequestRateLimitPolicy("default", maxAccessCount, timeWindowSeconds, requestedTokens);
     }
 
     private String resolveKeyPrefix() {

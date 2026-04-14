@@ -5,6 +5,8 @@ import com.alibaba.fastjson2.JSON;
 import com.hewei.hzyjy.xunzhi.agent.application.BusinessAgentResolver;
 import com.hewei.hzyjy.xunzhi.agent.application.BusinessAgentScene;
 import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardException;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardStage;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -109,7 +111,20 @@ public class InterviewFollowUpService {
                     currentFollowUpCount,
                     maxFollowUp
             );
-            String workflowResponse = interviewAiInvoker.callAiSyncWithParameters(sessionId, agentProperties, parameters);
+            String workflowResponse;
+            String singleFlightKey = interviewAiInvoker.buildSingleFlightKey(
+                    InterviewAiGuardStage.INTERVIEW_FOLLOWUP,
+                    sessionId,
+                    currentQuestion,
+                    answerContent
+            );
+            workflowResponse = interviewAiInvoker.callAiSyncWithParameters(
+                    sessionId,
+                    agentProperties,
+                    parameters,
+                    InterviewAiGuardStage.INTERVIEW_FOLLOWUP,
+                    singleFlightKey
+            );
             String workflowErrorMessage = interviewResponseParser.extractWorkflowErrorMessage(workflowResponse);
             if (StrUtil.isNotBlank(workflowErrorMessage)) {
                 log.warn("Follow-up workflow returned error, sessionId={}, message={}", sessionId, workflowErrorMessage);
@@ -130,6 +145,9 @@ public class InterviewFollowUpService {
                 askToUser = interviewResponseParser.extractContentFromInterviewResponse(workflowResponse);
             }
             return sanitizeFollowUpQuestion(askToUser);
+        } catch (InterviewAiGuardException ex) {
+            log.warn("Follow-up workflow fast-failed, sessionId={}, code={}", sessionId, ex.getErrorCode());
+            return null;
         } catch (Exception ex) {
             log.warn("Failed to invoke follow-up workflow, sessionId={}", sessionId, ex);
             return null;

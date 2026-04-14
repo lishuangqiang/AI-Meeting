@@ -24,10 +24,10 @@ class RedissonRequestRateLimitServiceTest {
         UserFlowRiskControlConfiguration configuration = buildConfiguration();
         RedissonRequestRateLimitService service = new RedissonRequestRateLimitService(redissonClient, configuration);
 
-        when(redissonClient.getRateLimiter("xunzhi-agent:rate-limit:user:alice")).thenReturn(rateLimiter);
+        when(redissonClient.getRateLimiter("xunzhi-agent:rate-limit:default:user:alice")).thenReturn(rateLimiter);
         when(rateLimiter.tryAcquire(1L)).thenReturn(true);
 
-        assertTrue(service.tryAcquire("user:alice"));
+        assertTrue(service.tryAcquire("user:alice", null));
         verify(rateLimiter).trySetRate(RateType.OVERALL, 20L, 1L, RateIntervalUnit.SECONDS);
         verify(rateLimiter).expire(60L, TimeUnit.SECONDS);
         verify(rateLimiter).tryAcquire(1L);
@@ -40,10 +40,10 @@ class RedissonRequestRateLimitServiceTest {
         UserFlowRiskControlConfiguration configuration = buildConfiguration();
         RedissonRequestRateLimitService service = new RedissonRequestRateLimitService(redissonClient, configuration);
 
-        when(redissonClient.getRateLimiter("xunzhi-agent:rate-limit:ip:127.0.0.1")).thenReturn(rateLimiter);
+        when(redissonClient.getRateLimiter("xunzhi-agent:rate-limit:default:ip:127.0.0.1")).thenReturn(rateLimiter);
         when(rateLimiter.tryAcquire(1L)).thenReturn(false);
 
-        assertFalse(service.tryAcquire("ip:127.0.0.1"));
+        assertFalse(service.tryAcquire("ip:127.0.0.1", null));
     }
 
     private UserFlowRiskControlConfiguration buildConfiguration() {

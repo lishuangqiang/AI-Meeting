@@ -7,11 +7,15 @@ import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
 import com.hewei.hzyjy.xunzhi.common.convention.exception.ClientException;
 import com.hewei.hzyjy.xunzhi.common.enums.InterviewErrorCodeEnum;
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.DemeanorEvaluationReqDTO;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardException;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardStage;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiSessionLockService;
 import com.hewei.hzyjy.xunzhi.interview.application.strategy.DemeanorNormalizationStrategy;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
 import com.hewei.hzyjy.xunzhi.toolkit.xunfei.XingChenAIClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -34,12 +38,22 @@ public class InterviewDemeanorService {
     private final BusinessAgentResolver businessAgentResolver;
     private final InterviewQuestionCacheService interviewQuestionCacheService;
     private final InterviewAiInvoker interviewAiInvoker;
+    private final InterviewAiSessionLockService interviewAiSessionLockService;
     private final InterviewResponseParser interviewResponseParser;
     private final DemeanorNormalizationStrategy demeanorNormalizationStrategy;
 
     public String evaluateDemeanor(DemeanorEvaluationReqDTO reqDTO) {
         String sessionId = null;
+        RLock heavyLock = null;
         try {
+            heavyLock = interviewAiSessionLockService.acquire(reqDTO.getSessionId(), InterviewAiGuardStage.INTERVIEW_DEMEANOR);
+            if (heavyLock == null) {
+                throw new ClientException(
+                        "AI_OVERLOADED: demeanor evaluation is processing, please retry",
+                        InterviewErrorCodeEnum.DEMEANOR_EVALUATION_FAILED
+                );
+            }
+
             String imageUrl = null;
 
             // Upload image first and get a workflow-readable URL.
@@ -79,7 +93,9 @@ public class InterviewDemeanorService {
                     promptBuilder,
                     reqDTO.getSessionId() != null ? reqDTO.getSessionId() : "demeanor_" + System.currentTimeMillis(),
                     agentProperties,
-                    imageUrl
+                    imageUrl,
+                    InterviewAiGuardStage.INTERVIEW_DEMEANOR,
+                    interviewAiInvoker.buildSingleFlightKey(InterviewAiGuardStage.INTERVIEW_DEMEANOR, reqDTO.getSessionId(), imageUrl)
             );
 
             log.info("Raw demeanor response: {}", aiResponseStr);
@@ -148,9 +164,13 @@ public class InterviewDemeanorService {
 
         } catch (ClientException ce) {
             throw ce;
+        } catch (InterviewAiGuardException aiGuardException) {
+            throw new ClientException(aiGuardException.getMessage(), InterviewErrorCodeEnum.DEMEANOR_EVALUATION_FAILED);
         } catch (Exception e) {
             log.error("Demeanor evaluation failed, sessionId={}, error={}", sessionId, e.getMessage(), e);
             throw new ClientException(InterviewErrorCodeEnum.DEMEANOR_EVALUATION_FAILED);
+        } finally {
+            interviewAiSessionLockService.release(heavyLock);
         }
     }
 

@@ -2,6 +2,7 @@ package com.hewei.hzyjy.xunzhi.toolkit.xunfei;
 
 import cn.xfyun.config.SparkIatModelEnum;
 import com.hewei.hzyjy.xunzhi.common.config.xunfei.XunfeiLatProperties;
+import jakarta.annotation.Resource;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.File;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.function.Consumer;
 
 /**
@@ -115,6 +117,9 @@ public class SparkIatUtil {
     @Autowired
     private XunfeiLatProperties xunfeiLatProperties;
 
+    @Resource(name = "cpuComputeExecutor")
+    private ExecutorService cpuComputeExecutor;
+
     /**
      * 异步语音转写
      * @param audioFile 音频文件
@@ -131,7 +136,7 @@ public class SparkIatUtil {
                 log.error("异步语音转写失败", e);
                 callback.onError(e);
             }
-        });
+        }, cpuComputeExecutor);
     }
 
     /**

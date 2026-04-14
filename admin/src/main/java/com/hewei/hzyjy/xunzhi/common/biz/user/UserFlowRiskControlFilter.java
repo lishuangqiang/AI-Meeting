@@ -5,6 +5,7 @@ import com.hewei.hzyjy.xunzhi.common.config.user.UserFlowRiskControlConfiguratio
 import com.hewei.hzyjy.xunzhi.common.convention.exception.ClientException;
 import com.hewei.hzyjy.xunzhi.common.convention.result.Results;
 import com.hewei.hzyjy.xunzhi.common.ratelimit.RequestRateLimitKeyResolver;
+import com.hewei.hzyjy.xunzhi.common.ratelimit.RequestRateLimitPolicy;
 import com.hewei.hzyjy.xunzhi.common.ratelimit.RequestRateLimitService;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
@@ -41,18 +42,39 @@ public class UserFlowRiskControlFilter implements Filter {
         }
 
         String key = requestRateLimitKeyResolver.resolve(httpRequest);
+        RequestRateLimitPolicy policy = userFlowRiskControlConfiguration.resolvePolicy(httpRequest.getRequestURI());
         boolean allowed;
         try {
-            allowed = requestRateLimitService.tryAcquire(key);
+            allowed = requestRateLimitService.tryAcquire(key, policy);
         } catch (Throwable ex) {
-            log.error("Request rate limiting failed, key={}", key, ex);
+            log.error("Request rate limiting failed, key={}, bucket={}", key, policy.bucketName(), ex);
             writeFailure((HttpServletResponse) response);
             return;
         }
 
         if (!allowed) {
+            log.warn("Request rejected by rate limiter, key={}, bucket={}, uri={}",
+                    key, policy.bucketName(), httpRequest.getRequestURI());
             writeFailure((HttpServletResponse) response);
             return;
+        }
+
+        RequestRateLimitPolicy aiPolicy = userFlowRiskControlConfiguration.resolveAiPolicy(httpRequest.getRequestURI());
+        if (aiPolicy != null) {
+            boolean aiAllowed;
+            try {
+                aiAllowed = requestRateLimitService.tryAcquire(key, aiPolicy);
+            } catch (Throwable ex) {
+                log.error("AI bucket rate limiting failed, key={}, bucket={}", key, aiPolicy.bucketName(), ex);
+                writeFailure((HttpServletResponse) response);
+                return;
+            }
+            if (!aiAllowed) {
+                log.warn("Request rejected by AI bucket limiter, key={}, bucket={}, uri={}",
+                        key, aiPolicy.bucketName(), httpRequest.getRequestURI());
+                writeFailure((HttpServletResponse) response);
+                return;
+            }
         }
         filterChain.doFilter(request, response);
     }

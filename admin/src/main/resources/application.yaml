@@ -93,6 +93,33 @@ xunzhi-agent:
     upload-temp-dir: ${XUNZHI_MULTIPART_TEMP_DIR:${xunzhi-agent.storage.base-dir}/temp/upload}
     audio-temp-dir: ${XUNZHI_AUDIO_TEMP_DIR:${xunzhi-agent.storage.base-dir}/temp/audio}
     log-dir: ${XUNZHI_LOG_DIR:${xunzhi-agent.storage.base-dir}/logs}
+  thread-pool:
+    general:
+      core-pool-size: 50
+      max-pool-size: 200
+      queue-capacity: 1000
+      keep-alive-seconds: 300
+      thread-name-prefix: xunzhi-async-
+    ai-io:
+      core-pool-size: 24
+      max-pool-size: 64
+      queue-capacity: 400
+      keep-alive-seconds: 120
+      thread-name-prefix: xunzhi-ai-io-
+    cpu:
+      core-pool-size: 8
+      max-pool-size: 16
+      queue-capacity: 256
+      keep-alive-seconds: 60
+      thread-name-prefix: xunzhi-cpu-
+    query:
+      core-pool-size: 16
+      max-pool-size: 48
+      queue-capacity: 600
+      keep-alive-seconds: 120
+      thread-name-prefix: xunzhi-query-
+    scheduled-pool-size: 8
+    scheduled-thread-name-prefix: xunzhi-schedule-
   agent-binding:
     general-agent-chat: ${XUNZHI_AGENT_GENERAL_CHAT:通用智能体}
     interview-question-extraction: ${XUNZHI_AGENT_INTERVIEW_QUESTION_EXTRACTION:面试出题官}
@@ -103,6 +130,48 @@ xunzhi-agent:
     enable: true
     time-window-seconds: 1
     max-access-count: 20
+    requested-tokens: 1
+    interview-answer-time-window-seconds: 1
+    interview-answer-max-access-count: 8
+    interview-heavy-time-window-seconds: 1
+    interview-heavy-max-access-count: 2
+    interview-read-time-window-seconds: 1
+    interview-read-max-access-count: 15
+    interview-ai-call-time-window-seconds: 1
+    interview-ai-call-max-access-count: 6
+  ai-guard:
+    enable: true
+    circuit-sliding-window-size: 50
+    circuit-failure-rate-threshold: 50
+    circuit-permitted-calls-in-half-open-state: 10
+    circuit-open-state-wait-millis: 30000
+    executor-threads: 32
+    stages:
+      interview-evaluation:
+        timeout-millis: 4000
+        max-concurrent-calls: 30
+        retry-count: 1
+        retry-wait-millis: 100
+      interview-followup:
+        timeout-millis: 3000
+        max-concurrent-calls: 20
+        retry-count: 1
+        retry-wait-millis: 100
+      interview-extraction:
+        timeout-millis: 15000
+        max-concurrent-calls: 8
+        retry-count: 0
+        retry-wait-millis: 0
+      interview-demeanor:
+        timeout-millis: 10000
+        max-concurrent-calls: 6
+        retry-count: 0
+        retry-wait-millis: 0
+  ai-singleflight:
+    enable: true
+    ttl-millis: 4000
+    heavy-lock-expire-seconds: 45
+    heavy-lock-wait-millis: 0
   interview:
     answer-guard:
       lock-expire-seconds: 120

@@ -6,16 +6,16 @@ import com.hewei.hzyjy.xunzhi.agent.application.BusinessAgentScene;
 import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewQuestionReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewQuestionRespDTO;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardStage;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiSessionLockService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionService;
-import com.hewei.hzyjy.xunzhi.toolkit.xunfei.AIContentAccumulator;
 import com.hewei.hzyjy.xunzhi.toolkit.xunfei.XingChenAIClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.io.OutputStream;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,6 +33,8 @@ public class InterviewQuestionExtractionService {
 
     private final BusinessAgentResolver businessAgentResolver;
     private final XingChenAIClient xingChenAIClient;
+    private final InterviewAiInvoker interviewAiInvoker;
+    private final InterviewAiSessionLockService interviewAiSessionLockService;
     private final InterviewQuestionService interviewQuestionService;
     private final InterviewQuestionCacheService interviewQuestionCacheService;
     private final InterviewResponseParser interviewResponseParser;
@@ -47,29 +49,29 @@ public class InterviewQuestionExtractionService {
         reqDTO.setAgentId(agentProperties.getId());
         response.setIsSuccess(0);
 
-        AIContentAccumulator accumulator = new AIContentAccumulator();
+        RLock heavyLock = null;
         long startTime = System.currentTimeMillis();
         try {
+            heavyLock = interviewAiSessionLockService.acquire(reqDTO.getSessionId(), InterviewAiGuardStage.INTERVIEW_EXTRACTION);
+            if (heavyLock == null) {
+                response.setErrorMessage("AI_OVERLOADED: extraction is processing, please retry");
+                return response;
+            }
+
             String fileUrl = uploadResumeIfPresent(reqDTO, agentProperties, response);
             if (fileUrl == null) {
                 return response;
             }
 
-            xingChenAIClient.chat(
+            String fullContent = interviewAiInvoker.callAiSyncWithFile(
                     EXTRACTION_PROMPT,
                     reqDTO.getSessionId(),
-                    "{}",
-                    false,
-                    buildAccumulatingOutputStream(accumulator),
-                    data -> {
-                    },
-                    agentProperties.getApiKey(),
-                    agentProperties.getApiSecret(),
-                    agentProperties.getApiFlowId(),
-                    fileUrl
+                    agentProperties,
+                    fileUrl,
+                    InterviewAiGuardStage.INTERVIEW_EXTRACTION,
+                    interviewAiInvoker.buildSingleFlightKey(InterviewAiGuardStage.INTERVIEW_EXTRACTION, reqDTO.getSessionId(), fileUrl)
             );
 
-            String fullContent = accumulator.getFullContent();
             long responseTime = System.currentTimeMillis() - startTime;
             reqDTO.setResumeFileUrl(fileUrl);
 
@@ -103,6 +105,8 @@ public class InterviewQuestionExtractionService {
             response.setErrorMessage("interview question extraction failed: " + e.getMessage());
             response.setIsSuccess(0);
             return response;
+        } finally {
+            interviewAiSessionLockService.release(heavyLock);
         }
     }
 
@@ -127,23 +131,6 @@ public class InterviewQuestionExtractionService {
             response.setErrorMessage("failed to upload resume file");
             return null;
         }
-    }
-
-    private OutputStream buildAccumulatingOutputStream(AIContentAccumulator accumulator) {
-        return new OutputStream() {
-            @Override
-            public void write(int b) {
-            }
-
-            @Override
-            public void write(byte[] b, int off, int len) throws IOException {
-                accumulator.appendChunk(b);
-            }
-
-            @Override
-            public void flush() {
-            }
-        };
     }
 
     private void persistRawResponse(InterviewQuestionReqDTO reqDTO, String fullContent, long responseTime) {
