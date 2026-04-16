@@ -1,4 +1,4 @@
-package com.hewei.hzyjy.xunzhi.interview.application;
+package com.hewei.hzyjy.xunzhi.interview.flow.session;
 
 import cn.hutool.core.util.StrUtil;
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.DemeanorEvaluationReqDTO;
@@ -6,12 +6,16 @@ import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewAnswerReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewQuestionReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewAnswerRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewQuestionRespDTO;
+import com.hewei.hzyjy.xunzhi.interview.application.InterviewWorkflowService;
 import com.hewei.hzyjy.xunzhi.interview.application.flow.InterviewFlowStateMachine;
-import com.hewei.hzyjy.xunzhi.interview.application.pipeline.InterviewAnswerPipeline;
-import com.hewei.hzyjy.xunzhi.interview.application.pipeline.InterviewQuestionLockService;
+import com.hewei.hzyjy.xunzhi.interview.flow.answer.InterviewAnswerPipeline;
+import com.hewei.hzyjy.xunzhi.interview.flow.answer.InterviewQuestionLockService;
+import com.hewei.hzyjy.xunzhi.interview.flow.demeanor.InterviewDemeanorService;
+import com.hewei.hzyjy.xunzhi.interview.flow.extraction.InterviewQuestionExtractionService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewFlowState;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewTurnLog;
+import io.micrometer.core.instrument.Metrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
@@ -71,18 +75,23 @@ public class InterviewAgentOrchestrationService implements InterviewWorkflowServ
             if (flowState == null) {
                 CurrentQuestionState recoveredState = recoverCurrentQuestionFromTurns(sessionId, questions);
                 if (recoveredState.finished) {
+                    Metrics.counter("flow_restore_source_total", "source", "turn_finished").increment();
                     response.setTotalScore(interviewQuestionCacheService.getSessionTotalScore(sessionId));
                     return response.finish().success();
                 }
                 if (recoveredState.hasQuestion()) {
+                    Metrics.counter("flow_restore_source_total", "source", "turn_recovered").increment();
                     flowState = restoreFlowToQuestion(sessionId, recoveredState.questionNumber, questions.size());
                     fillCurrentQuestionResponse(sessionId, response,
                             recoveredState.questionNumber, recoveredState.questionContent, flowState);
                     return response.success();
                 }
 
+                Metrics.counter("flow_restore_source_total", "source", "flow_reinit").increment();
                 interviewQuestionCacheService.initInterviewFlow(sessionId, questions.size());
                 flowState = interviewQuestionCacheService.getInterviewFlow(sessionId);
+            } else {
+                Metrics.counter("flow_restore_source_total", "source", "flow_cache").increment();
             }
 
             if (flowState == null) {

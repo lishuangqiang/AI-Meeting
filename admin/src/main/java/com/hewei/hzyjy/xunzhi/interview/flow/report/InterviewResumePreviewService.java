@@ -1,9 +1,12 @@
-package com.hewei.hzyjy.xunzhi.interview.service;
+package com.hewei.hzyjy.xunzhi.interview.flow.report;
 
 import cn.hutool.core.util.StrUtil;
 import com.hewei.hzyjy.xunzhi.common.convention.exception.ClientException;
 import com.hewei.hzyjy.xunzhi.common.convention.exception.ServiceException;
 import com.hewei.hzyjy.xunzhi.interview.dao.entity.InterviewQuestion;
+import com.hewei.hzyjy.xunzhi.interview.dao.entity.InterviewSession;
+import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionService;
+import com.hewei.hzyjy.xunzhi.interview.service.InterviewSessionService;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import okhttp3.HttpUrl;
@@ -25,14 +28,15 @@ public class InterviewResumePreviewService {
             .build();
 
     private final InterviewQuestionService interviewQuestionService;
+    private final InterviewSessionService interviewSessionService;
 
     public ResumePreviewResource loadResumePreview(String sessionId) {
         InterviewQuestion question = interviewQuestionService.getBySessionId(sessionId);
-        if (question == null) {
-            throw new ClientException("Interview session not found");
+        String resumeFileUrl = question == null ? null : question.getResumeFileUrl();
+        if (StrUtil.isBlank(resumeFileUrl)) {
+            InterviewSession session = interviewSessionService.getBySessionId(sessionId);
+            resumeFileUrl = session == null ? null : session.getResumeFileUrl();
         }
-
-        String resumeFileUrl = question.getResumeFileUrl();
         if (StrUtil.isBlank(resumeFileUrl)) {
             throw new ClientException("Resume preview source is missing");
         }

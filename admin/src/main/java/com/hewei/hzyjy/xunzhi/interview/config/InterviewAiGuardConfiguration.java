@@ -49,18 +49,18 @@ public class InterviewAiGuardConfiguration {
 
     private StagePolicy defaultByStage(String stage) {
         if (InterviewAiGuardStage.INTERVIEW_EVALUATION.equals(stage)) {
-            return new StagePolicy(4000L, 30, 1, 100L);
+            return new StagePolicy(20000L, 30, 1, 100L);
         }
         if (InterviewAiGuardStage.INTERVIEW_FOLLOWUP.equals(stage)) {
-            return new StagePolicy(3000L, 20, 1, 100L);
+            return new StagePolicy(20000L, 20, 1, 100L);
         }
         if (InterviewAiGuardStage.INTERVIEW_EXTRACTION.equals(stage)) {
-            return new StagePolicy(15000L, 8, 0, 0L);
+            return new StagePolicy(60000L, 8, 0, 0L);
         }
         if (InterviewAiGuardStage.INTERVIEW_DEMEANOR.equals(stage)) {
-            return new StagePolicy(10000L, 6, 0, 0L);
+            return new StagePolicy(20000L, 6, 0, 0L);
         }
-        return new StagePolicy(5000L, 20, 0, 0L);
+        return new StagePolicy(20000L, 20, 0, 0L);
     }
 
     private Long positiveOrDefault(Long value, Long defaultValue) {

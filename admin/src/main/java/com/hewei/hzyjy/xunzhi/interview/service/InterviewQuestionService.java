@@ -6,6 +6,7 @@ import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewQuestionReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewQuestionRespDTO;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 面试题服务接口
@@ -56,5 +57,19 @@ public interface InterviewQuestionService {
      * 根据AI响应数据创建并保存面试题
      */
     InterviewQuestion createFromAIResponse(InterviewQuestionReqDTO reqDTO, String aiResponseData, 
-                                          Integer responseTime, Integer tokenCount);
+                                           Integer responseTime, Integer tokenCount);
+
+    /**
+     * Upsert parsed structured extraction fields for reliable DB fallback.
+     */
+    InterviewQuestion upsertStructuredExtraction(
+            String sessionId,
+            String userName,
+            Long agentId,
+            String resumeFileUrl,
+            List<String> questions,
+            List<String> suggestions,
+            Integer resumeScore,
+            String interviewType,
+            Map<String, Object> resumeContext);
 }

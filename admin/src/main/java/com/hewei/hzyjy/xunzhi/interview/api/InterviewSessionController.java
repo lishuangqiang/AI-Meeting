@@ -14,8 +14,10 @@ import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewQuestionRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewSessionCreateRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewSessionRestoreRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.RadarChartDTO;
-import com.hewei.hzyjy.xunzhi.interview.application.InterviewSessionFacade;
+import com.hewei.hzyjy.xunzhi.interview.flow.session.InterviewSessionFacade;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -97,8 +99,12 @@ public class InterviewSessionController {
     @PostMapping("/sessions/{sessionId}/interview/answer")
     public Result<InterviewAnswerRespDTO> answerInterviewQuestion(
             @PathVariable String sessionId,
-            @RequestParam(value = "questionNumber", required = false) String questionNumber,
-            @RequestParam(value = "answerContent", required = false) String answerContent,
+            @NotBlank(message = "questionNumber cannot be blank")
+            @Size(max = 32, message = "questionNumber length must be less than or equal to 32")
+            @RequestParam("questionNumber") String questionNumber,
+            @NotBlank(message = "answerContent cannot be blank")
+            @Size(max = 5000, message = "answerContent length must be less than or equal to 5000")
+            @RequestParam("answerContent") String answerContent,
             @RequestParam(value = "requestId", required = false) String requestId,
             @CurrentUser UserContext currentUser) {
         InterviewAnswerReqDTO requestParam = new InterviewAnswerReqDTO();

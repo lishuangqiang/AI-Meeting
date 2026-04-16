@@ -14,6 +14,9 @@ public enum InterviewErrorCodeEnum implements IErrorCode {
     INTERVIEW_SESSION_NOT_FOUND("B000412", "interview session does not exist"),
     INTERVIEW_SESSION_ACCESS_DENIED("B000413", "no permission to access this interview session"),
     INTERVIEW_SESSION_INVALID_STATE("B000414", "interview session state is invalid"),
+    AI_TIMEOUT("B000415", "AI call timed out, please retry"),
+    AI_OVERLOADED("B000416", "AI service is busy, please retry"),
+    AI_UNAVAILABLE("B000417", "AI service is unavailable, please retry"),
 
     DEMEANOR_FILE_UPLOAD_FAILED("B000404", "demeanor image upload failed"),
     DEMEANOR_USER_PHOTO_NOT_FOUND("B000405", "user photo not found"),

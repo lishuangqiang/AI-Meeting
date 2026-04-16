@@ -164,7 +164,7 @@ create table interview_record
 create index idx_create_time
     on interview_record (create_time);
 
-create index idx_interview_record_user_session_del
+create unique index uk_interview_record_user_session_del
     on interview_record (user_id, session_id, del_flag);
 
 create index idx_session_id

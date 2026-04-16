@@ -1,4 +1,4 @@
-package com.hewei.hzyjy.xunzhi.interview.application;
+package com.hewei.hzyjy.xunzhi.interview.flow.demeanor;
 
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
@@ -8,10 +8,13 @@ import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
 import com.hewei.hzyjy.xunzhi.common.convention.exception.ClientException;
 import com.hewei.hzyjy.xunzhi.common.enums.InterviewErrorCodeEnum;
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.DemeanorEvaluationReqDTO;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardErrorCode;
 import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardException;
 import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardStage;
 import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiSessionLockService;
 import com.hewei.hzyjy.xunzhi.interview.application.strategy.DemeanorNormalizationStrategy;
+import com.hewei.hzyjy.xunzhi.interview.shared.InterviewAiInvoker;
+import com.hewei.hzyjy.xunzhi.interview.shared.InterviewResponseParser;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
 import com.hewei.hzyjy.xunzhi.toolkit.xunfei.XingChenAIClient;
 import lombok.RequiredArgsConstructor;
@@ -169,7 +172,7 @@ public class InterviewDemeanorService {
         } catch (ClientException ce) {
             throw ce;
         } catch (InterviewAiGuardException aiGuardException) {
-            throw new ClientException(aiGuardException.getMessage(), InterviewErrorCodeEnum.DEMEANOR_EVALUATION_FAILED);
+            throw new ClientException(aiGuardException.getMessage(), mapAiGuardError(aiGuardException.getErrorCode()));
         } catch (Exception e) {
             log.error("Demeanor evaluation failed, sessionId={}, error={}", sessionId, e.getMessage(), e);
             throw new ClientException(InterviewErrorCodeEnum.DEMEANOR_EVALUATION_FAILED);
@@ -189,6 +192,17 @@ public class InterviewDemeanorService {
         AgentPropertiesDO agentProperties = businessAgentResolver.resolveRequired(BusinessAgentScene.INTERVIEW_DEMEANOR);
         reqDTO.setAgentId(agentProperties.getId());
         return agentProperties;
+    }
+
+    private InterviewErrorCodeEnum mapAiGuardError(InterviewAiGuardErrorCode errorCode) {
+        if (errorCode == null) {
+            return InterviewErrorCodeEnum.AI_UNAVAILABLE;
+        }
+        return switch (errorCode) {
+            case AI_TIMEOUT -> InterviewErrorCodeEnum.AI_TIMEOUT;
+            case AI_OVERLOADED -> InterviewErrorCodeEnum.AI_OVERLOADED;
+            default -> InterviewErrorCodeEnum.AI_UNAVAILABLE;
+        };
     }
 
 }

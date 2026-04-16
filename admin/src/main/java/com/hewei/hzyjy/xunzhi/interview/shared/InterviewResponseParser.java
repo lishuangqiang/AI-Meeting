@@ -1,4 +1,4 @@
-package com.hewei.hzyjy.xunzhi.interview.application;
+package com.hewei.hzyjy.xunzhi.interview.shared;
 
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.fastjson2.JSON;

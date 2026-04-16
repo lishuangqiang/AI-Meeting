@@ -1,4 +1,4 @@
-package com.hewei.hzyjy.xunzhi.interview.application;
+package com.hewei.hzyjy.xunzhi.interview.flow.extraction;
 
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
@@ -7,8 +7,11 @@ import com.hewei.hzyjy.xunzhi.agent.application.BusinessAgentScene;
 import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewQuestionReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewQuestionRespDTO;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardException;
 import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardStage;
 import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiSessionLockService;
+import com.hewei.hzyjy.xunzhi.interview.shared.InterviewAiInvoker;
+import com.hewei.hzyjy.xunzhi.interview.shared.InterviewResponseParser;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionService;
 import com.hewei.hzyjy.xunzhi.toolkit.xunfei.XingChenAIClient;
@@ -87,6 +90,24 @@ public class InterviewQuestionExtractionService {
 
             response.setIsSuccess(1);
             log.info("Interview question extraction completed, sessionId={}", reqDTO.getSessionId());
+            return response;
+        } catch (InterviewAiGuardException e) {
+            long responseTime = System.currentTimeMillis() - startTime;
+            log.warn("Interview question extraction guarded failure, sessionId={}, code={}, message={}",
+                    reqDTO.getSessionId(), e.getErrorCode(), e.getMessage());
+            try {
+                reqDTO.setResumeFileUrl(null);
+                interviewQuestionService.createFromAIResponse(
+                        reqDTO,
+                        "{\"error\":\"" + e.getMessage() + "\"}",
+                        (int) responseTime,
+                        null
+                );
+            } catch (Exception saveException) {
+                log.error("Failed to save extraction guard error record: {}", saveException.getMessage());
+            }
+            response.setErrorMessage(e.getMessage());
+            response.setIsSuccess(0);
             return response;
         } catch (Exception e) {
             long responseTime = System.currentTimeMillis() - startTime;
@@ -228,6 +249,15 @@ public class InterviewQuestionExtractionService {
             }
 
             String interviewType = interviewResponseParser.asString(responseMap.get("type"));
+            if (StrUtil.isBlank(interviewType)) {
+                interviewType = interviewResponseParser.asString(responseMap.get("interviewType"));
+            }
+            if (StrUtil.isBlank(interviewType)) {
+                interviewType = interviewResponseParser.asString(responseMap.get("direction"));
+            }
+            if (StrUtil.isBlank(interviewType)) {
+                interviewType = interviewResponseParser.asString(responseMap.get("interviewDirection"));
+            }
             if (StrUtil.isNotBlank(interviewType)) {
                 interviewQuestionCacheService.cacheInterviewDirection(reqDTO.getSessionId(), interviewType);
                 response.setInterviewType(interviewType);
@@ -243,6 +273,7 @@ public class InterviewQuestionExtractionService {
                 log.warn("Interview question response does not contain valid resumeScore field");
             }
 
+            persistStructuredFields(reqDTO, questions, suggestions, resumeScore, interviewType, resumeContext);
             interviewQuestionCacheService.resetSessionScore(reqDTO.getSessionId());
             log.info("Session score reset, sessionId={}", reqDTO.getSessionId());
             return true;
@@ -277,6 +308,31 @@ public class InterviewQuestionExtractionService {
             return "-";
         }
         return DigestUtil.sha256Hex(value).substring(0, 16);
+    }
+
+    private void persistStructuredFields(
+            InterviewQuestionReqDTO reqDTO,
+            List<String> questions,
+            List<String> suggestions,
+            Integer resumeScore,
+            String interviewType,
+            Map<String, Object> resumeContext) {
+        try {
+            interviewQuestionService.upsertStructuredExtraction(
+                    reqDTO.getSessionId(),
+                    reqDTO.getUserName(),
+                    reqDTO.getAgentId(),
+                    reqDTO.getResumeFileUrl(),
+                    questions,
+                    suggestions,
+                    resumeScore,
+                    interviewType,
+                    resumeContext
+            );
+        } catch (Exception ex) {
+            log.warn("Failed to persist structured extraction fields, sessionId={}, error={}",
+                    reqDTO.getSessionId(), ex.getMessage(), ex);
+        }
     }
 
     private Map<String, Object> buildResumeContext(Map<String, Object> responseMap) {

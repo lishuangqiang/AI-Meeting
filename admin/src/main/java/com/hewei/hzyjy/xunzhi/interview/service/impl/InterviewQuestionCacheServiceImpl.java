@@ -648,6 +648,13 @@ public class InterviewQuestionCacheServiceImpl implements InterviewQuestionCache
         try {
             String cacheKey = INTERVIEW_DIRECTION_KEY + sessionId;
             String direction = stringRedisTemplate.opsForValue().get(cacheKey);
+            if (StrUtil.isBlank(direction)) {
+                InterviewQuestion question = interviewQuestionService.getBySessionId(sessionId);
+                if (question != null && StrUtil.isNotBlank(question.getInterviewType())) {
+                    direction = question.getInterviewType().trim();
+                    cacheInterviewDirection(sessionId, direction);
+                }
+            }
             log.info("Interview cache service message", sessionId, direction);
             return direction;
         } catch (Exception e) {

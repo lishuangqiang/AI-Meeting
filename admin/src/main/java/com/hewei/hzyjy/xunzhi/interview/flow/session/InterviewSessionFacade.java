@@ -1,4 +1,4 @@
-package com.hewei.hzyjy.xunzhi.interview.application;
+package com.hewei.hzyjy.xunzhi.interview.flow.session;
 
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.metadata.IPage;
@@ -12,15 +12,17 @@ import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewQuestionReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewAnswerRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewConversationRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewQuestionRespDTO;
+import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewRecordRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewSessionCreateRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewSessionRestoreRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.RadarChartDTO;
+import com.hewei.hzyjy.xunzhi.interview.application.InterviewWorkflowService;
 import com.hewei.hzyjy.xunzhi.interview.dao.entity.InterviewQuestion;
 import com.hewei.hzyjy.xunzhi.interview.dao.entity.InterviewSession;
+import com.hewei.hzyjy.xunzhi.interview.flow.report.InterviewResumePreviewService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewRecordService;
-import com.hewei.hzyjy.xunzhi.interview.service.InterviewResumePreviewService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewSessionService;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewSessionStatus;
 import lombok.RequiredArgsConstructor;
@@ -188,7 +190,15 @@ public class InterviewSessionFacade {
 
     public Integer getSessionTotalScore(String sessionId, Long userId) {
         interviewSessionService.requireOwnedSession(sessionId, userId);
-        return interviewQuestionCacheService.getSessionTotalScore(sessionId);
+        Integer score = interviewQuestionCacheService.getSessionTotalScore(sessionId);
+        if (score != null && score > 0) {
+            return score;
+        }
+        InterviewRecordRespDTO record = interviewRecordService.getBySessionId(sessionId, userId);
+        if (record != null && record.getInterviewScore() != null) {
+            return record.getInterviewScore();
+        }
+        return score;
     }
 
     public Map<String, String> getSessionInterviewSuggestions(String sessionId, Long userId) {
@@ -215,7 +225,15 @@ public class InterviewSessionFacade {
 
     public RadarChartDTO getRadarChartData(String sessionId, Long userId) {
         interviewSessionService.requireOwnedSession(sessionId, userId);
-        return interviewQuestionCacheService.getRadarChartData(sessionId);
+        RadarChartDTO radar = interviewQuestionCacheService.getRadarChartData(sessionId);
+        if (hasRadarSignal(radar)) {
+            return radar;
+        }
+        InterviewRecordRespDTO record = interviewRecordService.getBySessionId(sessionId, userId);
+        if (record != null && record.getRadarChart() != null) {
+            return record.getRadarChart();
+        }
+        return radar;
     }
 
     public String evaluateDemeanor(
@@ -252,5 +270,20 @@ public class InterviewSessionFacade {
         } catch (Exception ex) {
             return false;
         }
+    }
+
+    private boolean hasRadarSignal(RadarChartDTO radar) {
+        if (radar == null) {
+            return false;
+        }
+        return positive(radar.getResumeScore())
+                || positive(radar.getInterviewPerformance())
+                || positive(radar.getDemeanorEvaluation())
+                || positive(radar.getProfessionalSkills())
+                || positive(radar.getPotentialIndex());
+    }
+
+    private boolean positive(Integer value) {
+        return value != null && value > 0;
     }
 }

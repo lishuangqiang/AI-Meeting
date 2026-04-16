@@ -1,4 +1,4 @@
-package com.hewei.hzyjy.xunzhi.interview.application.pipeline;
+package com.hewei.hzyjy.xunzhi.interview.flow.answer;
 
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
@@ -7,9 +7,7 @@ import com.hewei.hzyjy.xunzhi.agent.application.BusinessAgentScene;
 import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewAnswerReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewAnswerRespDTO;
-import com.hewei.hzyjy.xunzhi.interview.application.InterviewEvaluationService;
-import com.hewei.hzyjy.xunzhi.interview.application.InterviewFollowUpService;
-import com.hewei.hzyjy.xunzhi.interview.application.InterviewResponseParser;
+import com.hewei.hzyjy.xunzhi.interview.shared.InterviewResponseParser;
 import com.hewei.hzyjy.xunzhi.interview.application.flow.InterviewFlowStateMachine;
 import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardException;
 import com.hewei.hzyjy.xunzhi.interview.application.rule.InterviewFollowUpRuleContext;
@@ -26,6 +24,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @Component
 @RequiredArgsConstructor
@@ -34,6 +33,7 @@ public class InterviewAnswerPipeline {
 
     private static final String PROCESSING_MESSAGE = "current request is processing, please retry later";
     private static final String QUESTION_LOCK_MESSAGE = "current question is processing, please retry later";
+    private static final String STALE_QUESTION_MESSAGE = "stale question number, please refresh current question";
 
     private final BusinessAgentResolver businessAgentResolver;
     private final InterviewQuestionCacheService interviewQuestionCacheService;
@@ -60,11 +60,14 @@ public class InterviewAnswerPipeline {
             if (!stepIdempotency(ctx)) {
                 return ctx.response;
             }
+            if (!stepLoadCurrentQuestion(ctx)) {
+                return finishAndReturn(ctx, false);
+            }
             if (!stepAcquireQuestionLock(ctx)) {
                 return ctx.response;
             }
-            if (!stepLoadCurrentQuestion(ctx)) {
-                return finishAndReturn(ctx, false);
+            if (!stepValidateQuestionAfterLock(ctx)) {
+                return ctx.response;
             }
             if (!stepEvaluateAndScore(ctx)) {
                 return ctx.response;
@@ -165,7 +168,7 @@ public class InterviewAnswerPipeline {
     }
 
     private boolean stepAcquireQuestionLock(InterviewAnswerPipelineContext ctx) throws InterruptedException {
-        RLock questionLock = interviewQuestionLockService.acquire(ctx.sessionId, ctx.requestParam.getQuestionNumber());
+        RLock questionLock = interviewQuestionLockService.acquire(ctx.sessionId, ctx.currentQuestionNumber);
         if (questionLock == null) {
             Metrics.counter("question_lock_contention_total").increment();
             recordAnswerPipelineFailure("question_lock_contention");
@@ -177,7 +180,7 @@ public class InterviewAnswerPipeline {
     }
 
     private boolean stepLoadCurrentQuestion(InterviewAnswerPipelineContext ctx) {
-        ctx.flowState = ensureInterviewFlow(ctx.sessionId, ctx.requestParam.getQuestionNumber());
+        ctx.flowState = ensureInterviewFlow(ctx.sessionId);
         if (ctx.flowState == null) {
             ctx.response.fail("interview flow not initialized");
             return false;
@@ -205,6 +208,39 @@ public class InterviewAnswerPipeline {
         ctx.currentFollowUpCount = resolveFollowUpCount(ctx.flowState, ctx.currentQuestionNumber);
         ctx.maxFollowUp = resolveMaxFollowUp(ctx.flowState);
         ctx.response.withCurrentQuestion(ctx.currentQuestionNumber, ctx.currentQuestion);
+        if (!isRequestedQuestionCurrent(ctx.requestParam.getQuestionNumber(), ctx.currentQuestionNumber)) {
+            Metrics.counter("stale_question_reject_total").increment();
+            recordAnswerPipelineFailure("stale_question_reject");
+            ctx.response.fail(STALE_QUESTION_MESSAGE);
+            return false;
+        }
+        return true;
+    }
+
+    private boolean stepValidateQuestionAfterLock(InterviewAnswerPipelineContext ctx) {
+        InterviewFlowState lockedFlow = interviewFlowStateMachine.current(ctx.sessionId);
+        if (lockedFlow == null) {
+            ctx.response.fail("interview flow not initialized");
+            return false;
+        }
+        String lockedQuestionNumber = interviewFlowStateMachine.currentQuestionNumber(lockedFlow);
+        if (!isRequestedQuestionCurrent(ctx.currentQuestionNumber, lockedQuestionNumber)) {
+            Metrics.counter("stale_question_reject_total").increment();
+            recordAnswerPipelineFailure("stale_question_reject_after_lock");
+            ctx.response.fail(STALE_QUESTION_MESSAGE);
+            return false;
+        }
+        String lockedQuestionContent = getQuestionWithReload(ctx.sessionId, lockedQuestionNumber);
+        if (StrUtil.isBlank(lockedQuestionContent)) {
+            ctx.response.fail("question does not exist or expired");
+            return false;
+        }
+        ctx.flowState = lockedFlow;
+        ctx.currentQuestionNumber = lockedQuestionNumber;
+        ctx.currentQuestion = lockedQuestionContent;
+        ctx.currentIsFollowUp = isFollowUpQuestion(lockedQuestionNumber);
+        ctx.currentFollowUpCount = resolveFollowUpCount(lockedFlow, lockedQuestionNumber);
+        ctx.maxFollowUp = resolveMaxFollowUp(lockedFlow);
         return true;
     }
 
@@ -378,7 +414,7 @@ public class InterviewAnswerPipeline {
         }
     }
 
-    private InterviewFlowState ensureInterviewFlow(String sessionId, String expectedQuestionNumber) {
+    private InterviewFlowState ensureInterviewFlow(String sessionId) {
         InterviewFlowState state = interviewFlowStateMachine.current(sessionId);
         if (state != null) {
             return state;
@@ -392,41 +428,7 @@ public class InterviewAnswerPipeline {
         if (questions == null || questions.isEmpty()) {
             return null;
         }
-        if (StrUtil.isNotBlank(expectedQuestionNumber)) {
-            InterviewFlowState restoredState = restoreFlowToQuestion(sessionId, expectedQuestionNumber, questions.size());
-            if (restoredState != null) {
-                return restoredState;
-            }
-        }
         return interviewFlowStateMachine.ensureInitialized(sessionId, questions.size());
-    }
-
-    private InterviewFlowState restoreFlowToQuestion(String sessionId, String questionNumber, int totalQuestions) {
-        if (StrUtil.isBlank(sessionId) || StrUtil.isBlank(questionNumber) || totalQuestions <= 0) {
-            return null;
-        }
-        interviewQuestionCacheService.initInterviewFlow(sessionId, totalQuestions);
-
-        Integer mainQuestionNo = extractMainQuestionNo(questionNumber);
-        if (mainQuestionNo == null || mainQuestionNo <= 0) {
-            return interviewFlowStateMachine.current(sessionId);
-        }
-
-        int targetMainQuestionNo = Math.min(mainQuestionNo, totalQuestions);
-        for (int currentMainQuestionNo = 1; currentMainQuestionNo < targetMainQuestionNo; currentMainQuestionNo++) {
-            InterviewFlowState advancedFlow = interviewFlowStateMachine.advanceMainQuestion(sessionId);
-            if (advancedFlow == null || interviewFlowStateMachine.isCompleted(advancedFlow)) {
-                return advancedFlow;
-            }
-        }
-
-        if (isFollowUpQuestion(questionNumber)) {
-            int followUpCount = extractFollowUpCount(questionNumber);
-            for (int index = 0; index < followUpCount; index++) {
-                interviewFlowStateMachine.startFollowUpQuestion(sessionId, questionNumber);
-            }
-        }
-        return interviewFlowStateMachine.current(sessionId);
     }
 
     private String getQuestionWithReload(String sessionId, String questionNumber) {
@@ -464,23 +466,6 @@ public class InterviewAnswerPipeline {
             return 2;
         }
         return flowState.getMaxFollowUp();
-    }
-
-    private Integer extractMainQuestionNo(String questionNumber) {
-        if (StrUtil.isBlank(questionNumber)) {
-            return null;
-        }
-        String normalized = questionNumber.trim();
-        int separatorIndex = normalized.indexOf("-F");
-        if (separatorIndex > 0) {
-            normalized = normalized.substring(0, separatorIndex);
-        }
-        try {
-            int parsed = Integer.parseInt(normalized);
-            return parsed > 0 ? parsed : null;
-        } catch (Exception ex) {
-            return null;
-        }
     }
 
     private int extractFollowUpCount(String questionNumber) {
@@ -523,6 +508,35 @@ public class InterviewAnswerPipeline {
     private void recordAnswerPipelineFailure(String reason) {
         String safeReason = StrUtil.isBlank(reason) ? "unknown" : reason.trim();
         Metrics.counter("answer_pipeline_fail_total", "reason", safeReason).increment();
+    }
+
+    private boolean isRequestedQuestionCurrent(String requestedQuestion, String currentQuestion) {
+        String normalizedRequested = normalizeQuestionNumber(requestedQuestion);
+        String normalizedCurrent = normalizeQuestionNumber(currentQuestion);
+        return Objects.equals(normalizedRequested, normalizedCurrent);
+    }
+
+    private String normalizeQuestionNumber(String questionNumber) {
+        if (StrUtil.isBlank(questionNumber)) {
+            return null;
+        }
+        String normalized = questionNumber.trim().toUpperCase();
+        if (normalized.matches("\\d+")) {
+            try {
+                return String.valueOf(Integer.parseInt(normalized));
+            } catch (Exception ex) {
+                return normalized;
+            }
+        }
+        if (normalized.matches("\\d+-F\\d+")) {
+            String[] parts = normalized.split("-F");
+            try {
+                return Integer.parseInt(parts[0]) + "-F" + Integer.parseInt(parts[1]);
+            } catch (Exception ex) {
+                return normalized;
+            }
+        }
+        return normalized;
     }
 
     private static final class InterviewAnswerPipelineContext {

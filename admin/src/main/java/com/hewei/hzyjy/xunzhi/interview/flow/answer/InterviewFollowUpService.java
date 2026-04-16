@@ -1,4 +1,4 @@
-package com.hewei.hzyjy.xunzhi.interview.application;
+package com.hewei.hzyjy.xunzhi.interview.flow.answer;
 
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.fastjson2.JSON;
@@ -7,6 +7,8 @@ import com.hewei.hzyjy.xunzhi.agent.application.BusinessAgentScene;
 import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
 import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardException;
 import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardStage;
+import com.hewei.hzyjy.xunzhi.interview.shared.InterviewAiInvoker;
+import com.hewei.hzyjy.xunzhi.interview.shared.InterviewResponseParser;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -189,8 +191,8 @@ public class InterviewFollowUpService {
                 || "__FINISH__".equalsIgnoreCase(normalized)) {
             return null;
         }
-        if (!normalized.endsWith("?") && !normalized.endsWith("？")) {
-            normalized = normalized + "？";
+        if (!normalized.endsWith("?")) {
+            normalized = normalized + "?";
         }
         return clip(normalized, 100);
     }

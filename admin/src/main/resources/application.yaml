@@ -49,7 +49,7 @@ spring:
         thread-name-prefix: redis-session-async-
   ai:
     openai:
-      api-key: ${SPRING_AI_OPENAI_API_KEY:}
+      api-key: ${SPRING_AI_OPENAI_API_KEY:sk-xxxxxxxxxxxxx}
       base-url: ${SPRING_AI_OPENAI_BASE_URL:https://api.openai.com}
       chat:
         options:
@@ -150,31 +150,31 @@ xunzhi-agent:
     executor-threads: 32
     stages:
       interview-evaluation:
-        timeout-millis: 4000
+        timeout-millis: 20000
         max-concurrent-calls: 30
         retry-count: 1
         retry-wait-millis: 100
       interview-followup:
-        timeout-millis: 3000
+        timeout-millis: 20000
         max-concurrent-calls: 20
         retry-count: 1
         retry-wait-millis: 100
       interview-extraction:
-        timeout-millis: 15000
+        timeout-millis: 60000
         max-concurrent-calls: 8
         retry-count: 0
         retry-wait-millis: 0
       interview-demeanor:
-        timeout-millis: 10000
+        timeout-millis: 20000
         max-concurrent-calls: 6
         retry-count: 0
         retry-wait-millis: 0
   ai-singleflight:
     enable: true
-    ttl-millis: 4000
-    wait-timeout-millis: 5000
+    ttl-millis: 65000
+    wait-timeout-millis: 65000
     cleanup-threshold: 256
-    heavy-lock-expire-seconds: 45
+    heavy-lock-expire-seconds: 90
     heavy-lock-wait-millis: 0
   interview:
     answer-guard:

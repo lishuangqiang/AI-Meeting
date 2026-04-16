@@ -1,10 +1,12 @@
-package com.hewei.hzyjy.xunzhi.interview.application;
+package com.hewei.hzyjy.xunzhi.interview.flow.answer;
 
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.fastjson2.JSON;
 import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
 import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardException;
 import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardStage;
+import com.hewei.hzyjy.xunzhi.interview.shared.InterviewAiInvoker;
+import com.hewei.hzyjy.xunzhi.interview.shared.InterviewResponseParser;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -58,19 +60,19 @@ public class InterviewEvaluationService {
 
         Map<String, Object> evaluationResult = evaluateAnswerByScorerAgent(
                 sessionId, requestId, questionNumber, questionContent, answerContent, scorerAgent);
-        //兜底
+        // Fallback when scorer workflow parsing fails.
         if (evaluationResult == null || evaluationResult.isEmpty()) {
             String evaluationPrompt = String.format(
-                    "请你作为中文技术面试评审官，对候选人的回答进行打分，并且只返回严格 JSON，不要输出任何额外说明。\n" +
-                            "题目：%s\n" +
-                            "回答：%s\n" +
-                            "要求：\n" +
-                            "1. score 为 0-100 的整数；\n" +
-                            "2. feedback 必须使用中文，简洁指出优点或问题；\n" +
-                            "3. missing_points 必须使用中文数组；\n" +
-                            "4. follow_up_needed 为 true/false；\n" +
-                            "5. 如果需要追问，follow_up_question 必须使用中文；\n" +
-                            "输出格式：{\"score\":0,\"feedback\":\"\",\"follow_up_needed\":true,\"follow_up_question\":\"\",\"missing_points\":[\"...\"]}",
+                    "You are a technical interview evaluator. Score the candidate answer and return strict JSON only.\n" +
+                            "Question: %s\n" +
+                            "Answer: %s\n" +
+                            "Requirements:\n" +
+                            "1. score must be an integer in [0,100].\n" +
+                            "2. feedback must be concise and practical.\n" +
+                            "3. missing_points must be an array of strings.\n" +
+                            "4. follow_up_needed must be true or false.\n" +
+                            "5. If follow_up_needed is true, follow_up_question must be non-empty.\n" +
+                            "Output schema: {\"score\":0,\"feedback\":\"\",\"follow_up_needed\":true,\"follow_up_question\":\"\",\"missing_points\":[\"...\"]}",
                     questionContent, answerContent
             );
             try {

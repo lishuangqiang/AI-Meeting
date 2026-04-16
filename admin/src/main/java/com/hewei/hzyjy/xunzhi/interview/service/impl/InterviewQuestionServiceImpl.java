@@ -2,15 +2,14 @@ package com.hewei.hzyjy.xunzhi.interview.service.impl;
 
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.hewei.hzyjy.xunzhi.interview.dao.entity.InterviewQuestion;
-import com.hewei.hzyjy.xunzhi.interview.dao.repository.InterviewQuestionRepository;
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewQuestionReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewQuestionRespDTO;
+import com.hewei.hzyjy.xunzhi.interview.dao.entity.InterviewQuestion;
+import com.hewei.hzyjy.xunzhi.interview.dao.repository.InterviewQuestionRepository;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,14 +18,14 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
+import java.util.Collections;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-/**
- * 面试题服务实现类
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -61,24 +60,21 @@ public class InterviewQuestionServiceImpl implements InterviewQuestionService {
 
     @Override
     public InterviewQuestion getBySessionId(String sessionId) {
-        Optional<InterviewQuestion> optional = interviewQuestionRepository
-                .findBySessionIdAndDelFlag(sessionId, 0);
+        Optional<InterviewQuestion> optional = interviewQuestionRepository.findBySessionIdAndDelFlag(sessionId, 0);
         return optional.orElse(null);
     }
 
     @Override
     public List<InterviewQuestion> getByUserName(String userName) {
-        return interviewQuestionRepository
-                .findByUserNameAndDelFlagOrderByCreateTimeDesc(userName, 0);
+        return interviewQuestionRepository.findByUserNameAndDelFlagOrderByCreateTimeDesc(userName, 0);
     }
 
     @Override
     public IPage<InterviewQuestionRespDTO> pageUserInterviewQuestions(String userName, Integer current, Integer size) {
         Pageable pageable = PageRequest.of(current - 1, size);
-        org.springframework.data.domain.Page<InterviewQuestion> questionPage = 
+        org.springframework.data.domain.Page<InterviewQuestion> questionPage =
                 interviewQuestionRepository.findByUserNameAndDelFlagOrderByCreateTimeDesc(userName, 0, pageable);
-        
-        // 转换为MyBatis-Plus的IPage格式
+
         Page<InterviewQuestionRespDTO> resultPage = new Page<>(current, size);
         resultPage.setTotal(questionPage.getTotalElements());
         resultPage.setRecords(
@@ -86,17 +82,15 @@ public class InterviewQuestionServiceImpl implements InterviewQuestionService {
                         .map(this::convertToRespDTO)
                         .collect(Collectors.toList())
         );
-        
         return resultPage;
     }
 
     @Override
     public IPage<InterviewQuestionRespDTO> pageAllInterviewQuestions(Integer current, Integer size) {
         Pageable pageable = PageRequest.of(current - 1, size);
-        org.springframework.data.domain.Page<InterviewQuestion> questionPage = 
+        org.springframework.data.domain.Page<InterviewQuestion> questionPage =
                 interviewQuestionRepository.findByDelFlagOrderByCreateTimeDesc(0, pageable);
-        
-        // 转换为MyBatis-Plus的IPage格式
+
         Page<InterviewQuestionRespDTO> resultPage = new Page<>(current, size);
         resultPage.setTotal(questionPage.getTotalElements());
         resultPage.setRecords(
@@ -104,14 +98,12 @@ public class InterviewQuestionServiceImpl implements InterviewQuestionService {
                         .map(this::convertToRespDTO)
                         .collect(Collectors.toList())
         );
-        
         return resultPage;
     }
 
     @Override
     public List<InterviewQuestion> getByInterviewType(String interviewType) {
-        return interviewQuestionRepository
-                .findByInterviewTypeAndDelFlagOrderByCreateTimeDesc(interviewType, 0);
+        return interviewQuestionRepository.findByInterviewTypeAndDelFlagOrderByCreateTimeDesc(interviewType, 0);
     }
 
     @Override
@@ -127,7 +119,7 @@ public class InterviewQuestionServiceImpl implements InterviewQuestionService {
             }
             return false;
         } catch (Exception e) {
-            log.error("删除面试题失败，ID: {}, 错误: {}", id, e.getMessage());
+            log.error("Delete interview question failed, id={}, error={}", id, e.getMessage());
             return false;
         }
     }
@@ -138,12 +130,12 @@ public class InterviewQuestionServiceImpl implements InterviewQuestionService {
     }
 
     @Override
-    public InterviewQuestion createFromAIResponse(InterviewQuestionReqDTO reqDTO, String aiResponseData, 
-                                                  Integer responseTime, Integer tokenCount) {
+    public InterviewQuestion createFromAIResponse(
+            InterviewQuestionReqDTO reqDTO,
+            String aiResponseData,
+            Integer responseTime,
+            Integer tokenCount) {
         try {
-            // 解析AI响应数据
-            JSONObject responseJson = JSON.parseObject(aiResponseData);
-            
             InterviewQuestion question = new InterviewQuestion();
             question.setSessionId(reqDTO.getSessionId());
             question.setUserName(reqDTO.getUserName());
@@ -152,60 +144,25 @@ public class InterviewQuestionServiceImpl implements InterviewQuestionService {
             question.setResponseTime(responseTime);
             question.setTokenCount(tokenCount);
             question.setRawResponseData(aiResponseData);
-            
-            // 解析面试题列表
-            if (responseJson.containsKey("questions")) {
-                List<String> questions = responseJson.getJSONArray("questions")
-                        .toJavaList(String.class);
-                question.setQuestions(questions);
-                
-                // 转换为JSON格式存储（按题号组织）
-                Map<String, String> questionsMap = new LinkedHashMap<>();
-                for (int i = 0; i < questions.size(); i++) {
-                    questionsMap.put(String.valueOf(i + 1), questions.get(i));
-                }
-                question.setQuestionsJson(JSON.toJSONString(questionsMap));
-                log.info("面试题JSON格式存储完成，会话ID: {}, 题目数量: {}", reqDTO.getSessionId(), questions.size());
+
+            Map<String, Object> payload = parseStructuredPayload(aiResponseData);
+            List<String> questions = toStringList(payload.get("questions"));
+            List<String> suggestions = toStringList(firstNonNull(payload.get("sugest"), payload.get("suggestions")));
+            Integer resumeScore = toInteger(firstNonNull(payload.get("resumeScore"), payload.get("score")));
+            String interviewType = resolveInterviewType(payload);
+
+            setQuestions(question, questions);
+            setSuggestions(question, suggestions);
+            if (resumeScore != null) {
+                question.setResumeScore(resumeScore);
             }
-            
-            // 解析建议列表
-            if (responseJson.containsKey("sugest") || responseJson.containsKey("suggestions")) {
-                String suggestKey = responseJson.containsKey("sugest") ? "sugest" : "suggestions";
-                List<String> suggestions = responseJson.getJSONArray(suggestKey)
-                        .toJavaList(String.class);
-                question.setSuggestions(suggestions);
-                
-                // 转换为JSON格式存储（按编号组织）
-                Map<String, String> suggestionsMap = new LinkedHashMap<>();
-                for (int i = 0; i < suggestions.size(); i++) {
-                    suggestionsMap.put(String.valueOf(i + 1), suggestions.get(i));
-                }
-                question.setSuggestionsJson(JSON.toJSONString(suggestionsMap));
-                log.info("面试建议JSON格式存储完成，会话ID: {}, 建议数量: {}", reqDTO.getSessionId(), suggestions.size());
+            if (StrUtil.isNotBlank(interviewType)) {
+                question.setInterviewType(interviewType.trim());
             }
-            
-            // 解析简历评分
-            if (responseJson.containsKey("resumeScore")) {
-                try {
-                    Integer resumeScore = responseJson.getInteger("resumeScore");
-                    question.setResumeScore(resumeScore);
-                    log.info("简历评分解析完成，会话ID: {}, 评分: {}", reqDTO.getSessionId(), resumeScore);
-                } catch (Exception e) {
-                    log.warn("简历评分解析失败，会话ID: {}, 错误: {}", reqDTO.getSessionId(), e.getMessage());
-                }
-            }
-            
-            // 解析面试类型
-            if (responseJson.containsKey("type")) {
-                question.setInterviewType(responseJson.getString("type"));
-            }
-            
             return saveInterviewQuestion(question);
-            
         } catch (Exception e) {
-            log.error("创建面试题记录失败，会话ID: {}, 错误: {}", reqDTO.getSessionId(), e.getMessage());
-            
-            // 创建错误记录
+            log.error("Create interview question from AI response failed, sessionId={}, error={}",
+                    reqDTO.getSessionId(), e.getMessage(), e);
             InterviewQuestion errorQuestion = new InterviewQuestion();
             errorQuestion.setSessionId(reqDTO.getSessionId());
             errorQuestion.setUserName(reqDTO.getUserName());
@@ -215,25 +172,251 @@ public class InterviewQuestionServiceImpl implements InterviewQuestionService {
             errorQuestion.setTokenCount(tokenCount);
             errorQuestion.setRawResponseData(aiResponseData);
             errorQuestion.setErrorMessage(e.getMessage());
-            
             return saveInterviewQuestion(errorQuestion);
         }
     }
-    
-    /**
-     * 转换实体为响应DTO
-     */
+
+    @Override
+    public InterviewQuestion upsertStructuredExtraction(
+            String sessionId,
+            String userName,
+            Long agentId,
+            String resumeFileUrl,
+            List<String> questions,
+            List<String> suggestions,
+            Integer resumeScore,
+            String interviewType,
+            Map<String, Object> resumeContext) {
+        if (StrUtil.isBlank(sessionId)) {
+            return null;
+        }
+        InterviewQuestion question = getBySessionId(sessionId);
+        if (question == null) {
+            question = new InterviewQuestion();
+            question.setSessionId(sessionId);
+            question.setDelFlag(0);
+        }
+        if (StrUtil.isNotBlank(userName)) {
+            question.setUserName(userName);
+        }
+        if (agentId != null) {
+            question.setAgentId(agentId);
+        }
+        if (StrUtil.isNotBlank(resumeFileUrl)) {
+            question.setResumeFileUrl(resumeFileUrl);
+        }
+        setQuestions(question, questions);
+        setSuggestions(question, suggestions);
+        if (resumeScore != null) {
+            question.setResumeScore(resumeScore);
+        }
+        if (StrUtil.isNotBlank(interviewType)) {
+            question.setInterviewType(interviewType.trim());
+        }
+        if ((question.getRawResponseData() == null || question.getRawResponseData().isBlank())
+                && resumeContext != null
+                && !resumeContext.isEmpty()) {
+            question.setRawResponseData(JSON.toJSONString(resumeContext));
+        }
+        return saveInterviewQuestion(question);
+    }
+
+    private Map<String, Object> parseStructuredPayload(String aiResponseData) {
+        if (StrUtil.isBlank(aiResponseData)) {
+            return Collections.emptyMap();
+        }
+        try {
+            Object parsed = JSON.parse(aiResponseData);
+            Map<String, Object> candidate = findStructuredCandidate(parsed);
+            if (candidate != null) {
+                return candidate;
+            }
+            if (parsed instanceof JSONObject jsonObject) {
+                return jsonObject.toJavaObject(Map.class);
+            }
+        } catch (Exception ignored) {
+            // Fallback to empty map.
+        }
+        return Collections.emptyMap();
+    }
+
+    private Map<String, Object> findStructuredCandidate(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof JSONObject jsonObject) {
+            return findStructuredCandidate(jsonObject.toJavaObject(Map.class));
+        }
+        if (value instanceof JSONArray jsonArray) {
+            return findStructuredCandidate(jsonArray.toJavaObject(List.class));
+        }
+        if (value instanceof Map<?, ?> rawMap) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> map = new LinkedHashMap<>((Map<String, Object>) rawMap);
+            if (containsStructuredKey(map)) {
+                return map;
+            }
+            for (Object nested : map.values()) {
+                Map<String, Object> candidate = findStructuredCandidate(nested);
+                if (candidate != null) {
+                    return candidate;
+                }
+            }
+            return null;
+        }
+        if (value instanceof List<?> rawList) {
+            for (Object nested : rawList) {
+                Map<String, Object> candidate = findStructuredCandidate(nested);
+                if (candidate != null) {
+                    return candidate;
+                }
+            }
+            return null;
+        }
+        if (value instanceof String text) {
+            if (StrUtil.isBlank(text) || (!text.contains("{") && !text.contains("["))) {
+                return null;
+            }
+            try {
+                return findStructuredCandidate(JSON.parse(text));
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private boolean containsStructuredKey(Map<String, Object> map) {
+        if (map == null || map.isEmpty()) {
+            return false;
+        }
+        return map.containsKey("questions")
+                || map.containsKey("sugest")
+                || map.containsKey("suggestions")
+                || map.containsKey("resumeScore")
+                || map.containsKey("type")
+                || map.containsKey("interviewType")
+                || map.containsKey("direction")
+                || map.containsKey("interviewDirection");
+    }
+
+    private List<String> toStringList(Object value) {
+        if (value == null) {
+            return Collections.emptyList();
+        }
+        if (value instanceof List<?> rawList) {
+            return rawList.stream()
+                    .map(item -> item == null ? null : String.valueOf(item).trim())
+                    .filter(StrUtil::isNotBlank)
+                    .collect(Collectors.toList());
+        }
+        if (value instanceof JSONArray jsonArray) {
+            return jsonArray.toJavaList(String.class).stream()
+                    .map(item -> item == null ? null : item.trim())
+                    .filter(StrUtil::isNotBlank)
+                    .collect(Collectors.toList());
+        }
+        String raw = String.valueOf(value).trim();
+        if (StrUtil.isBlank(raw)) {
+            return Collections.emptyList();
+        }
+        if (raw.startsWith("[") && raw.endsWith("]")) {
+            try {
+                JSONArray jsonArray = JSON.parseArray(raw);
+                return jsonArray.toJavaList(String.class).stream()
+                        .map(item -> item == null ? null : item.trim())
+                        .filter(StrUtil::isNotBlank)
+                        .collect(Collectors.toList());
+            } catch (Exception ignored) {
+                // Fallback to split.
+            }
+        }
+        String[] parts = raw.split("[,;\\uFF0C\\uFF1B\\n]+");
+        return java.util.Arrays.stream(parts)
+                .map(String::trim)
+                .filter(StrUtil::isNotBlank)
+                .collect(Collectors.toList());
+    }
+
+    private Integer toInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        String text = String.valueOf(value).trim();
+        if (StrUtil.isBlank(text)) {
+            return null;
+        }
+        try {
+            return (int) Math.round(Double.parseDouble(text));
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private String resolveInterviewType(Map<String, Object> payload) {
+        if (payload == null || payload.isEmpty()) {
+            return null;
+        }
+        Object value = firstNonNull(
+                payload.get("type"),
+                payload.get("interviewType"),
+                payload.get("direction"),
+                payload.get("interviewDirection")
+        );
+        if (value == null) {
+            return null;
+        }
+        String interviewType = String.valueOf(value).trim();
+        return StrUtil.isBlank(interviewType) ? null : interviewType;
+    }
+
+    private Object firstNonNull(Object... values) {
+        if (values == null) {
+            return null;
+        }
+        for (Object value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private void setQuestions(InterviewQuestion question, List<String> questions) {
+        if (question == null || questions == null || questions.isEmpty()) {
+            return;
+        }
+        question.setQuestions(questions);
+        Map<String, String> questionsMap = new LinkedHashMap<>();
+        for (int i = 0; i < questions.size(); i++) {
+            questionsMap.put(String.valueOf(i + 1), questions.get(i));
+        }
+        question.setQuestionsJson(JSON.toJSONString(questionsMap));
+    }
+
+    private void setSuggestions(InterviewQuestion question, List<String> suggestions) {
+        if (question == null || suggestions == null || suggestions.isEmpty()) {
+            return;
+        }
+        question.setSuggestions(suggestions);
+        Map<String, String> suggestionsMap = new LinkedHashMap<>();
+        for (int i = 0; i < suggestions.size(); i++) {
+            suggestionsMap.put(String.valueOf(i + 1), suggestions.get(i));
+        }
+        question.setSuggestionsJson(JSON.toJSONString(suggestionsMap));
+    }
+
     private InterviewQuestionRespDTO convertToRespDTO(InterviewQuestion question) {
         InterviewQuestionRespDTO respDTO = new InterviewQuestionRespDTO();
         BeanUtils.copyProperties(question, respDTO);
-        
-        // 设置成功状态
         if (StrUtil.isBlank(question.getErrorMessage())) {
             respDTO.setIsSuccess(1);
         } else {
             respDTO.setIsSuccess(0);
         }
-        
         return respDTO;
     }
 }

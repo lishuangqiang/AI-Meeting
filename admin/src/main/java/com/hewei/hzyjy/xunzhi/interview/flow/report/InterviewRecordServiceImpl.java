@@ -1,4 +1,4 @@
-package com.hewei.hzyjy.xunzhi.interview.service.impl;
+package com.hewei.hzyjy.xunzhi.interview.flow.report;
 
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.fastjson2.JSON;
@@ -10,6 +10,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hewei.hzyjy.xunzhi.common.convention.exception.ClientException;
 import com.hewei.hzyjy.xunzhi.common.enums.InterviewErrorCodeEnum;
+import com.hewei.hzyjy.xunzhi.interview.application.finalize.InterviewFinalizeLockService;
 import com.hewei.hzyjy.xunzhi.interview.application.InterviewSessionOwnershipService;
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewRecordPageReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewRecordSaveReqDTO;
@@ -18,17 +19,22 @@ import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewRecordRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewReviewFeedbackRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.RadarChartDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.RadarDimensionItemRespDTO;
+import com.hewei.hzyjy.xunzhi.interview.dao.entity.InterviewQuestion;
 import com.hewei.hzyjy.xunzhi.interview.dao.entity.InterviewSession;
 import com.hewei.hzyjy.xunzhi.interview.dao.entity.InterviewRecordDO;
 import com.hewei.hzyjy.xunzhi.interview.dao.mapper.InterviewRecordMapper;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
+import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewRecordService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewSessionService;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewSessionStatus;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewTurnLog;
+import io.micrometer.core.instrument.Metrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
 import org.springframework.beans.BeanUtils;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -49,9 +55,13 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class InterviewRecordServiceImpl extends ServiceImpl<InterviewRecordMapper, InterviewRecordDO> implements InterviewRecordService {
 
+    private static final int MAX_FINALIZE_RETRIES = 3;
+
     private final InterviewQuestionCacheService interviewQuestionCacheService;
     private final InterviewSessionOwnershipService interviewSessionOwnershipService;
     private final InterviewSessionService interviewSessionService;
+    private final InterviewQuestionService interviewQuestionService;
+    private final InterviewFinalizeLockService interviewFinalizeLockService;
 
     @Override
     public void saveInterviewRecord(String sessionId, Long userId, InterviewRecordSaveReqDTO requestParam) {
@@ -68,9 +78,7 @@ public class InterviewRecordServiceImpl extends ServiceImpl<InterviewRecordMappe
         Integer resumeScore = interviewQuestionCacheService.getSessionResumeScore(sessionId);
         Map<String, String> interviewQuestions = interviewQuestionCacheService.getSessionInterviewQuestions(sessionId);
         Integer questionCount = interviewQuestions == null ? 0 : interviewQuestions.size();
-        String interviewDirection = StrUtil.isNotBlank(safeRequest.getInterviewDirection())
-                ? safeRequest.getInterviewDirection()
-                : interviewQuestionCacheService.getSessionInterviewDirection(sessionId);
+        String interviewDirection = resolveInterviewDirection(sessionId, safeRequest, session);
 
         LambdaQueryWrapper<InterviewRecordDO> queryWrapper = Wrappers.lambdaQuery(InterviewRecordDO.class)
                 .eq(InterviewRecordDO::getUserId, userId)
@@ -119,8 +127,21 @@ public class InterviewRecordServiceImpl extends ServiceImpl<InterviewRecordMappe
         record.setUpdateTime(now);
 
         if (record.getId() == null) {
-            baseMapper.insert(record);
-            log.info("Created interview record, userId={}, sessionId={}", userId, sessionId);
+            try {
+                baseMapper.insert(record);
+                log.info("Created interview record, userId={}, sessionId={}", userId, sessionId);
+            } catch (DuplicateKeyException duplicateKeyException) {
+                InterviewRecordDO existingRecord = baseMapper.selectOne(queryWrapper);
+                if (existingRecord == null) {
+                    throw duplicateKeyException;
+                }
+                record.setId(existingRecord.getId());
+                if (record.getCreateTime() == null) {
+                    record.setCreateTime(existingRecord.getCreateTime());
+                }
+                baseMapper.updateById(record);
+                log.info("Recovered duplicate interview record insert by update, userId={}, sessionId={}", userId, sessionId);
+            }
         } else {
             baseMapper.updateById(record);
             log.info("Updated interview record, userId={}, sessionId={}", userId, sessionId);
@@ -180,7 +201,7 @@ public class InterviewRecordServiceImpl extends ServiceImpl<InterviewRecordMappe
                 .eq(InterviewRecordDO::getDelFlag, 0);
         InterviewRecordDO record = baseMapper.selectOne(queryWrapper);
         if (record == null) {
-            // 首次打开报告页时，自动尝试从缓存生成一次记录。
+            // Auto-create a record from cache when report page is opened for the first time.
             try {
                 saveInterviewRecord(sessionId, userId, new InterviewRecordSaveReqDTO());
                 record = baseMapper.selectOne(queryWrapper);
@@ -207,16 +228,63 @@ public class InterviewRecordServiceImpl extends ServiceImpl<InterviewRecordMappe
             throw new ClientException(InterviewErrorCodeEnum.SESSION_ID_EMPTY);
         }
         validateUserId(userId);
+        RLock finalizeLock = null;
+        try {
+            finalizeLock = interviewFinalizeLockService.acquire(sessionId);
+            if (finalizeLock == null) {
+                Metrics.counter("finalize_lock_contention_total").increment();
+                throw new ClientException("finalize is processing, please retry");
+            }
+            for (int attempt = 1; attempt <= MAX_FINALIZE_RETRIES; attempt++) {
+                try {
+                    InterviewSession session = interviewSessionOwnershipService.requireOwnedSession(sessionId, userId);
+                    InterviewRecordDO existingRecord = findRecordBySessionAndUser(sessionId, userId);
+                    boolean alreadyFinished = session != null
+                            && InterviewSessionStatus.FINISHED.name().equalsIgnoreCase(session.getStatus());
+                    if (alreadyFinished && existingRecord != null) {
+                        log.info("Finalize skipped because session already finished and record exists, sessionId={}, userId={}",
+                                sessionId, userId);
+                        return;
+                    }
 
-        interviewSessionService.finishSession(sessionId, userId);
-        saveInterviewRecord(sessionId, userId, new InterviewRecordSaveReqDTO());
-        log.info("Saved interview record from redis, sessionId={}, userId={}", sessionId, userId);
+                    saveInterviewRecord(sessionId, userId, new InterviewRecordSaveReqDTO());
+                    if (!alreadyFinished) {
+                        interviewSessionService.finishSession(sessionId, userId);
+                    }
+                    saveInterviewRecord(sessionId, userId, new InterviewRecordSaveReqDTO());
+                    log.info("Saved interview record from redis, sessionId={}, userId={}, attempt={}",
+                            sessionId, userId, attempt);
+                    return;
+                } catch (Exception ex) {
+                    Metrics.counter("finalize_retry_total").increment();
+                    log.warn("Finalize attempt failed, sessionId={}, userId={}, attempt={}",
+                            sessionId, userId, attempt, ex);
+                    if (attempt >= MAX_FINALIZE_RETRIES) {
+                        throw ex;
+                    }
+                }
+            }
+        } catch (ClientException clientException) {
+            throw clientException;
+        } catch (Exception ex) {
+            throw new ClientException("failed to finalize interview record, please retry");
+        } finally {
+            interviewFinalizeLockService.release(finalizeLock);
+        }
     }
 
     private void validateUserId(Long userId) {
         if (userId == null || userId <= 0) {
             throw new ClientException(InterviewErrorCodeEnum.INVALID_USER_ID);
         }
+    }
+
+    private InterviewRecordDO findRecordBySessionAndUser(String sessionId, Long userId) {
+        LambdaQueryWrapper<InterviewRecordDO> queryWrapper = Wrappers.lambdaQuery(InterviewRecordDO.class)
+                .eq(InterviewRecordDO::getUserId, userId)
+                .eq(InterviewRecordDO::getSessionId, sessionId)
+                .eq(InterviewRecordDO::getDelFlag, 0);
+        return baseMapper.selectOne(queryWrapper);
     }
 
     private Integer resolveInterviewScore(String sessionId, InterviewRecordSaveReqDTO requestParam) {
@@ -245,6 +313,29 @@ public class InterviewRecordServiceImpl extends ServiceImpl<InterviewRecordMappe
                 })
                 .map(Map.Entry::getValue)
                 .collect(Collectors.joining("; "));
+    }
+
+    private String resolveInterviewDirection(
+            String sessionId,
+            InterviewRecordSaveReqDTO requestParam,
+            InterviewSession session) {
+        if (requestParam != null && StrUtil.isNotBlank(requestParam.getInterviewDirection())) {
+            return requestParam.getInterviewDirection().trim();
+        }
+
+        String directionFromCache = interviewQuestionCacheService.getSessionInterviewDirection(sessionId);
+        if (StrUtil.isNotBlank(directionFromCache)) {
+            return directionFromCache.trim();
+        }
+
+        if (session != null && StrUtil.isNotBlank(session.getInterviewType())) {
+            return session.getInterviewType().trim();
+        }
+        InterviewQuestion question = interviewQuestionService.getBySessionId(sessionId);
+        if (question != null && StrUtil.isNotBlank(question.getInterviewType())) {
+            return question.getInterviewType().trim();
+        }
+        return null;
     }
 
     private String resolveInterviewStatus(String sessionStatus, Integer totalScore) {
@@ -446,13 +537,13 @@ public class InterviewRecordServiceImpl extends ServiceImpl<InterviewRecordMappe
         int finalScore = radarChart == null ? 0 : clampScore(radarChart.getPotentialIndex());
         String baseComment;
         if (finalScore >= 85) {
-            baseComment = "整体表现优秀，已经具备较强的面试竞争力。";
+            baseComment = "Overall performance is strong and already competitive for interviews.";
         } else if (finalScore >= 70) {
-            baseComment = "整体表现扎实，优势比较明确，但还有继续打磨的空间。";
+            baseComment = "Overall performance is solid, with clear strengths and room for further polishing.";
         } else if (finalScore >= 60) {
-            baseComment = "整体表现达到基础要求，但答题结构和岗位匹配度仍需加强。";
+            baseComment = "Overall performance meets the baseline, but answer structure and role-fit still need improvement.";
         } else {
-            baseComment = "整体表现低于预期，建议优先补强岗位匹配度、回答深度和表达稳定性。";
+            baseComment = "Overall performance is below expectation; prioritize role-fit, depth of answers, and communication stability.";
         }
 
         String strongest = resolveDimensionLabel(findStrongestDimensionKey(radarChart));
@@ -460,7 +551,7 @@ public class InterviewRecordServiceImpl extends ServiceImpl<InterviewRecordMappe
         if (StrUtil.isBlank(strongest) || StrUtil.isBlank(weakest) || strongest.equals(weakest)) {
             return baseComment;
         }
-        return baseComment + " 当前优势在" + strongest + "，后续优先提升" + weakest + "。";
+        return baseComment + " Current strength is " + strongest + ", and prioritize improving " + weakest + ".";
     }
 
     private List<String> buildHighlights(List<InterviewTurnLog> turns, RadarChartDTO radarChart) {
@@ -471,16 +562,16 @@ public class InterviewRecordServiceImpl extends ServiceImpl<InterviewRecordMappe
 
         LinkedHashSet<String> generated = new LinkedHashSet<>();
         if (radarChart != null && clampScore(radarChart.getResumeScore()) >= 75) {
-            generated.add("你的简历与目标岗位匹配度较高，核心经历亮点比较清晰。");
+            generated.add("Your resume is well aligned to the target role, with clear highlights in core experience.");
         }
         if (radarChart != null && clampScore(radarChart.getInterviewPerformance()) >= 75) {
-            generated.add("你的回答结构比较完整，能够较稳定地围绕问题展开。");
+            generated.add("Your answer structure is complete and remains focused on the question.");
         }
         if (radarChart != null && clampScore(radarChart.getDemeanorEvaluation()) >= 75) {
-            generated.add("你的神态和表达状态比较稳定，整体临场表现自然。");
+            generated.add("Your demeanor and expression are stable, and your on-site delivery feels natural.");
         }
         if (radarChart != null && clampScore(radarChart.getProfessionalSkills()) >= 75) {
-            generated.add("你的专业能力表达较清晰，能够体现一定的项目经验和技术理解。");
+            generated.add("Your professional skills are communicated clearly with concrete technical understanding.");
         }
         return limitList(generated, 3);
     }
@@ -509,13 +600,13 @@ public class InterviewRecordServiceImpl extends ServiceImpl<InterviewRecordMappe
         }
         switch (dimensionKey) {
             case "resume_score" ->
-                    generated.add("建议进一步围绕目标岗位优化简历亮点，补充更具体的项目结果和业务价值。");
+                    generated.add("Refine resume highlights for the target role and add concrete project outcomes and business impact.");
             case "interview_performance" ->
-                    generated.add("建议回答时更聚焦问题本身，尽量用更清晰的结构补充案例、动作和结果。");
+                    generated.add("Answer more directly, and use a clear structure with case, action, and result.");
             case "demeanor_evaluation" ->
-                    generated.add("建议继续练习语速控制、停顿节奏和镜头前更稳定的表达状态。");
+                    generated.add("Practice pace control, pauses, and steadier expression in front of the camera.");
             case "professional_skills" ->
-                    generated.add("建议把专业能力讲得更具体，补充技术取舍、难点处理和最终效果。");
+                    generated.add("Explain technical decisions in more detail, including trade-offs, challenges, and outcomes.");
             default -> {
             }
         }
@@ -569,7 +660,7 @@ public class InterviewRecordServiceImpl extends ServiceImpl<InterviewRecordMappe
             if (StrUtil.isBlank(sentence) || sentence.length() < 6) {
                 continue;
             }
-            parts.add(sentence.endsWith("。") ? sentence : sentence + "。");
+            parts.add(sentence.endsWith(".") ? sentence : sentence + ".");
         }
         return parts;
     }
@@ -637,7 +728,7 @@ public class InterviewRecordServiceImpl extends ServiceImpl<InterviewRecordMappe
         return switch (dimensionKey) {
             case "resume_score" -> "简历匹配度";
             case "interview_performance" -> "答题表现";
-            case "demeanor_evaluation" -> "神态表达";
+            case "demeanor_evaluation" -> "Demeanor expression";
             case "professional_skills" -> "专业能力呈现";
             case "potential_index" -> "综合潜力";
             default -> null;
