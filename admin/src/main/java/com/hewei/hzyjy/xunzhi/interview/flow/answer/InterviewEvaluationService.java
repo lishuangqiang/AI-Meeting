@@ -58,10 +58,12 @@ public class InterviewEvaluationService {
             String answerContent,
             AgentPropertiesDO scorerAgent) {
 
+        // 1) 先走评分工作流（带参数化上下文），拿标准结构化评分。
         Map<String, Object> evaluationResult = evaluateAnswerByScorerAgent(
                 sessionId, requestId, questionNumber, questionContent, answerContent, scorerAgent);
         // Fallback when scorer workflow parsing fails.
         if (evaluationResult == null || evaluationResult.isEmpty()) {
+            // 2) 工作流解析失败时降级到 prompt 直评，保证主链路可继续。
             String evaluationPrompt = String.format(
                     "You are a technical interview evaluator. Score the candidate answer and return strict JSON only.\n" +
                             "Question: %s\n" +
@@ -101,6 +103,7 @@ public class InterviewEvaluationService {
             return null;
         }
 
+        // 3) 最后统一字段归一化，补全 followUp/feedback 等默认值。
         Map<String, Object> normalized = normalizeScorerResult(evaluationResult);
         inferFollowUpNeededIfMissing(normalized);
         ensureDefaultEvaluationFields(normalized);

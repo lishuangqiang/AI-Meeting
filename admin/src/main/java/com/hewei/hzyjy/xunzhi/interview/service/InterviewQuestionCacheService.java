@@ -249,6 +249,13 @@ public interface InterviewQuestionCacheService {
     InterviewFlowState markInterviewCompleted(String sessionId);
 
     /**
+     * 恢复面试流程状态（补偿动作）。
+     * @param sessionId session id
+     * @param flowState target flow state
+     */
+    void restoreInterviewFlow(String sessionId, InterviewFlowState flowState);
+
+    /**
      * Record request id for idempotency.
      * @param sessionId session id
      * @param requestId client request id

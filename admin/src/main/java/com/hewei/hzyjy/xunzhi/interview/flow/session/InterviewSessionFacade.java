@@ -70,6 +70,7 @@ public class InterviewSessionFacade {
     }
 
     public void finishSession(String sessionId, Long userId) {
+        // 1) 统一走 finalize 收口：落记录 + 补齐会话结束态（内部含锁与重试）。
         interviewRecordService.saveInterviewRecordFromRedis(sessionId, userId);
     }
 
@@ -82,8 +83,10 @@ public class InterviewSessionFacade {
             MultipartFile resumePdf,
             Long userId,
             String username) {
+        // 1) 进入提取前先把会话打到“上传中”，避免并发接口误判状态。
         interviewSessionService.markResumeUploading(sessionId, userId);
 
+        // 2) 组装提取请求并委托 workflow（内部会做上传、AI 调用、结构化落库）。
         InterviewQuestionReqDTO reqDTO = new InterviewQuestionReqDTO();
         reqDTO.setUserName(username);
         reqDTO.setSessionId(sessionId);
@@ -91,6 +94,7 @@ public class InterviewSessionFacade {
 
         InterviewQuestionRespDTO response = interviewWorkflowService.extractInterviewQuestions(reqDTO);
         if (response != null && Integer.valueOf(1).equals(response.getIsSuccess())) {
+            // 3) 提取成功后推进到 READY，并同步会话级简历地址与面试方向。
             interviewSessionService.markReady(
                     sessionId,
                     userId,
@@ -100,6 +104,7 @@ public class InterviewSessionFacade {
             return response;
         }
 
+        // 3) 提取失败回落到 DRAFT，保留后续重试入口。
         interviewSessionService.markDraft(sessionId, userId);
         return response;
     }
@@ -108,8 +113,11 @@ public class InterviewSessionFacade {
             String sessionId,
             InterviewAnswerReqDTO requestParam,
             Long userId) {
+        // 1) 先校验会话可继续（归属 + 状态）。
         ensureInterviewCanProceed(sessionId, userId);
+        // 2) 首次答题把 READY 提升到 IN_PROGRESS。
         interviewSessionService.markInProgressIfReady(sessionId, userId);
+        // 3) 委托答题编排流水线，内部处理幂等/加锁/评估/推进。
         requestParam.setSessionId(sessionId);
         return interviewWorkflowService.answerInterviewQuestion(sessionId, requestParam);
     }
@@ -135,6 +143,7 @@ public class InterviewSessionFacade {
     }
 
     public InterviewSessionRestoreRespDTO restoreInterviewSession(String sessionId, Long userId) {
+        // 1) 先恢复会话主信息（状态、简历、方向等主字段）。
         InterviewSession session = interviewSessionService.requireOwnedSession(sessionId, userId);
 
         InterviewSessionRestoreRespDTO response = new InterviewSessionRestoreRespDTO();
@@ -144,6 +153,7 @@ public class InterviewSessionFacade {
         response.setResumeFileUrl(session.getResumeFileUrl());
         response.setInterviewType(session.getInterviewType());
 
+        // 2) 再用 question 表补齐 resume/interviewType/resumeScore，降低对缓存依赖。
         InterviewQuestion question = interviewQuestionService.getBySessionId(sessionId);
         if (question != null) {
             if (StrUtil.isBlank(response.getResumeFileUrl())) {
@@ -155,6 +165,7 @@ public class InterviewSessionFacade {
             response.setResumeScore(question.getResumeScore());
         }
 
+        // 3) 最后回补缓存态字段（suggestions、resumeScore），保证前端恢复页可直接渲染。
         Map<String, String> suggestions = interviewQuestionCacheService.getSessionInterviewSuggestions(sessionId);
         if (suggestions == null || suggestions.isEmpty()) {
             interviewQuestionCacheService.loadInterviewSuggestionsFromDatabase(sessionId);
@@ -190,6 +201,7 @@ public class InterviewSessionFacade {
 
     public Integer getSessionTotalScore(String sessionId, Long userId) {
         interviewSessionService.requireOwnedSession(sessionId, userId);
+        // 分数读取顺序：缓存 > 记录快照，避免缓存丢失导致分数回退。
         Integer score = interviewQuestionCacheService.getSessionTotalScore(sessionId);
         if (score != null && score > 0) {
             return score;
@@ -242,11 +254,13 @@ public class InterviewSessionFacade {
             String requestSessionId,
             Long userId,
             String username) {
+        // 1) 神态评估只允许在可继续的会话上执行。
         ensureInterviewCanProceed(sessionId, userId);
         if (requestSessionId != null && !sessionId.equals(requestSessionId)) {
             throw new ClientException("sessionId mismatch between path and request parameter");
         }
 
+        // 2) 组装请求并委托 workflow（内部处理上传、AI 评估与分值落缓存）。
         DemeanorEvaluationReqDTO reqDTO = new DemeanorEvaluationReqDTO();
         reqDTO.setUserName(username);
         reqDTO.setSessionId(sessionId);

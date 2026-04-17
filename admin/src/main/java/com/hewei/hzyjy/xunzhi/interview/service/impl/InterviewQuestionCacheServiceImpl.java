@@ -763,6 +763,18 @@ public class InterviewQuestionCacheServiceImpl implements InterviewQuestionCache
     }
 
     @Override
+    public void restoreInterviewFlow(String sessionId, InterviewFlowState flowState) {
+        if (StrUtil.isBlank(sessionId) || flowState == null) {
+            return;
+        }
+        try {
+            saveFlowState(sessionId, flowState);
+        } catch (Exception ex) {
+            log.error("Failed to restore interview flow, sessionId: {}", sessionId, ex);
+        }
+    }
+
+    @Override
     public boolean markAnswerRequestProcessed(String sessionId, String requestId) {
         if (StrUtil.isBlank(sessionId) || StrUtil.isBlank(requestId)) {
             return true;

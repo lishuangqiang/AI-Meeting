@@ -175,7 +175,7 @@ xunzhi-agent:
     wait-timeout-millis: 65000
     cleanup-threshold: 256
     heavy-lock-expire-seconds: 90
-    heavy-lock-wait-millis: 0
+    heavy-lock-wait-millis: 300
   interview:
     answer-guard:
       lock-expire-seconds: -1

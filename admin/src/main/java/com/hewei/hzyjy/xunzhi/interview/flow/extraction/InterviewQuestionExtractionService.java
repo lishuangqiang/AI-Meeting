@@ -56,6 +56,7 @@ public class InterviewQuestionExtractionService {
         RLock heavyLock = null;
         long startTime = System.currentTimeMillis();
         try {
+            // 同一 session 的提取属于重操作，先拿会话级重锁，避免并发上传/提取造成重复消耗和状态覆盖。
             heavyLock = interviewAiSessionLockService.acquire(reqDTO.getSessionId(), InterviewAiGuardStage.INTERVIEW_EXTRACTION);
             if (heavyLock == null) {
                 response.setErrorMessage("AI_OVERLOADED: extraction is processing, please retry");
@@ -79,6 +80,7 @@ public class InterviewQuestionExtractionService {
             long responseTime = System.currentTimeMillis() - startTime;
             reqDTO.setResumeFileUrl(fileUrl);
 
+            // 先持久化原始响应，再做结构化解析；解析失败时仍可通过原始响应排障与回补。
             persistRawResponse(reqDTO, fullContent, responseTime);
 
             response.setResumeFileUrl(fileUrl);
@@ -96,6 +98,7 @@ public class InterviewQuestionExtractionService {
             log.warn("Interview question extraction guarded failure, sessionId={}, code={}, message={}",
                     reqDTO.getSessionId(), e.getErrorCode(), e.getMessage());
             try {
+                // 失败也落库，但仅记录错误信息；结构化字段覆盖保护在 service 层统一处理。
                 interviewQuestionService.createFromAIResponse(
                         reqDTO,
                         "{\"error\":\"" + e.getMessage() + "\"}",
@@ -246,6 +249,7 @@ public class InterviewQuestionExtractionService {
                 log.warn("Interview question response does not contain suggestions");
             }
 
+            // type 字段兼容历史别名，保证 interviewDirection/interviewType 在不同模型输出下都能回补。
             String interviewType = interviewResponseParser.asString(responseMap.get("type"));
             if (StrUtil.isBlank(interviewType)) {
                 interviewType = interviewResponseParser.asString(responseMap.get("interviewType"));
@@ -271,6 +275,7 @@ public class InterviewQuestionExtractionService {
                 log.warn("Interview question response does not contain valid resumeScore field");
             }
 
+            // 结构化二次落库用于 Redis 丢失后的恢复来源，避免报告阶段出现字段缺失。
             persistStructuredFields(reqDTO, questions, suggestions, resumeScore, interviewType, resumeContext);
             interviewQuestionCacheService.resetSessionScore(reqDTO.getSessionId());
             log.info("Session score reset, sessionId={}", reqDTO.getSessionId());

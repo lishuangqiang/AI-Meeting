@@ -42,6 +42,7 @@ public class InterviewAiSingleFlightService {
         long now = System.currentTimeMillis();
         long ttlMillis = resolveTtlMillis();
         AtomicBoolean newFlight = new AtomicBoolean(false);
+        // compute 保证同 key 下“创建 flight + 复用 flight”原子化，避免瞬时并发下出现多个 leader。
         FlightEntry entry = flights.compute(key, (ignored, existing) -> {
             if (existing == null || existing.expireAtMillis <= now) {
                 newFlight.set(true);
@@ -53,6 +54,7 @@ public class InterviewAiSingleFlightService {
         if (newFlight.get()) {
             meterRegistry.counter("ai_singleflight_miss_total").increment();
             try {
+                // leader 执行真实调用，并把结果广播给同 key 的等待者。
                 T value = supplier.get();
                 entry.resultFuture.complete(value);
                 return value;
@@ -71,6 +73,7 @@ public class InterviewAiSingleFlightService {
             T reused = (T) entry.resultFuture.get(resolveWaitTimeoutMillis(), TimeUnit.MILLISECONDS);
             return reused;
         } catch (TimeoutException ex) {
+            // waiter 超时后主动剔除旧 flight，避免后续请求持续等待一个可能已失活的 future。
             flights.remove(key, entry);
             throw new CompletionException(new RejectedExecutionException("single-flight wait timeout", ex));
         } catch (InterruptedException ex) {

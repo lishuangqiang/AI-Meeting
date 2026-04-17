@@ -47,6 +47,7 @@ public class InterviewFollowUpService {
             Integer currentFollowUpCount,
             Integer maxFollowUp) {
 
+        // 1) 先做追问次数与输入兜底，超过上限直接停止追问。
         int safeCurrentFollowUpCount = Math.max(0, currentFollowUpCount == null ? 0 : currentFollowUpCount);
         int safeMaxFollowUp = maxFollowUp == null || maxFollowUp <= 0 ? 2 : maxFollowUp;
         String sanitizedFallbackQuestion = sanitizeFollowUpQuestion(fallbackFollowUpQuestion);
@@ -62,6 +63,7 @@ public class InterviewFollowUpService {
 
         String generatedQuestion = null;
         try {
+            // 2) 优先调用追问工作流生成更针对性的追问。
             AgentPropertiesDO agentProperties = businessAgentResolver.resolveRequired(BusinessAgentScene.INTERVIEW_QUESTION_ASKING);
             generatedQuestion = invokeFollowUpWorkflow(
                     sessionId,
@@ -76,6 +78,7 @@ public class InterviewFollowUpService {
             log.warn("Follow-up agent unavailable, fallback to scorer suggestion, sessionId={}", sessionId, ex);
         }
 
+        // 3) 工作流失败时回退到评分器建议问题，仍可继续流程。
         String questionContent = StrUtil.isNotBlank(generatedQuestion) ? generatedQuestion : sanitizedFallbackQuestion;
         if (StrUtil.isBlank(questionContent)) {
             return FollowUpQuestionResult.empty();

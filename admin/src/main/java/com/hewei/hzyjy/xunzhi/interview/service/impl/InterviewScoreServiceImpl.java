@@ -9,17 +9,32 @@ import com.hewei.hzyjy.xunzhi.interview.service.cache.InterviewCacheKeys;
 import com.hewei.hzyjy.xunzhi.interview.service.cache.InterviewCacheStore;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewTurnLog;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @RequiredArgsConstructor
 public class InterviewScoreServiceImpl implements InterviewScoreService {
 
     private static final long CACHE_EXPIRE_HOURS = 24L;
+    // 用 Lua 一次完成 sum/count/avg 更新，降低多 key 分步写入造成的数据漂移窗口。
+    private static final String SCORE_AGGREGATE_UPDATE_SCRIPT_TEXT =
+            "local sum = redis.call('INCRBY', KEYS[1], tonumber(ARGV[1])) "
+                    + "local cnt = redis.call('INCRBY', KEYS[2], 1) "
+                    + "local avg = math.floor((sum / cnt) + 0.5) "
+                    + "redis.call('SET', KEYS[3], tostring(avg)) "
+                    + "redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2])) "
+                    + "redis.call('EXPIRE', KEYS[2], tonumber(ARGV[2])) "
+                    + "redis.call('EXPIRE', KEYS[3], tonumber(ARGV[2])) "
+                    + "return {sum, cnt, avg}";
+    private static final DefaultRedisScript<List> SCORE_AGGREGATE_UPDATE_SCRIPT = initScoreAggregateScript();
 
     private final InterviewCacheStore interviewCacheStore;
+    private final StringRedisTemplate stringRedisTemplate;
     private final InterviewScoreAggregatorStrategy scoreAggregatorStrategy;
     private final DemeanorNormalizationStrategy demeanorNormalizationStrategy;
 
@@ -45,18 +60,35 @@ public class InterviewScoreServiceImpl implements InterviewScoreService {
         }
 
         int safeScore = scoreAggregatorStrategy.clampScore(score == null ? 0 : score);
-        Long scoreSum = interviewCacheStore.increment(InterviewCacheKeys.sessionScoreSum(sessionId), safeScore);
-        Long answerCount = interviewCacheStore.increment(InterviewCacheKeys.sessionScoreCount(sessionId), 1L);
-        int averagedScore = scoreAggregatorStrategy.averageFromAggregate(scoreSum, answerCount);
+        String scoreSumKey = InterviewCacheKeys.sessionScoreSum(sessionId);
+        String scoreCountKey = InterviewCacheKeys.sessionScoreCount(sessionId);
+        String scoreKey = InterviewCacheKeys.sessionScore(sessionId);
+        long ttlSeconds = TimeUnit.HOURS.toSeconds(CACHE_EXPIRE_HOURS);
 
-        interviewCacheStore.setValue(
-                InterviewCacheKeys.sessionScore(sessionId),
-                String.valueOf(averagedScore),
-                CACHE_EXPIRE_HOURS
-        );
-        interviewCacheStore.expire(InterviewCacheKeys.sessionScoreSum(sessionId), CACHE_EXPIRE_HOURS);
-        interviewCacheStore.expire(InterviewCacheKeys.sessionScoreCount(sessionId), CACHE_EXPIRE_HOURS);
-        return averagedScore;
+        try {
+            // 主路径：原子更新聚合分数。
+            List<?> scriptResult = stringRedisTemplate.execute(
+                    SCORE_AGGREGATE_UPDATE_SCRIPT,
+                    List.of(scoreSumKey, scoreCountKey, scoreKey),
+                    String.valueOf(safeScore),
+                    String.valueOf(ttlSeconds)
+            );
+            Integer averageFromScript = parseAverageFromScriptResult(scriptResult);
+            if (averageFromScript != null) {
+                return scoreAggregatorStrategy.clampScore(averageFromScript);
+            }
+        } catch (Exception ignored) {
+            // 兼容路径：脚本不可用时退化到旧逻辑，优先保证可用性。
+        }
+
+        // 旧逻辑兜底：不是强原子，但可在脚本异常时继续服务。
+        Long scoreSum = interviewCacheStore.increment(scoreSumKey, safeScore);
+        Long answerCount = interviewCacheStore.increment(scoreCountKey, 1L);
+        int averagedScore = scoreAggregatorStrategy.averageFromAggregate(scoreSum, answerCount);
+        interviewCacheStore.setValue(scoreKey, String.valueOf(averagedScore), CACHE_EXPIRE_HOURS);
+        interviewCacheStore.expire(scoreSumKey, CACHE_EXPIRE_HOURS);
+        interviewCacheStore.expire(scoreCountKey, CACHE_EXPIRE_HOURS);
+        return scoreAggregatorStrategy.clampScore(averagedScore);
     }
 
     @Override
@@ -123,5 +155,27 @@ public class InterviewScoreServiceImpl implements InterviewScoreService {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private Integer parseAverageFromScriptResult(List<?> scriptResult) {
+        if (scriptResult == null || scriptResult.size() < 3) {
+            return null;
+        }
+        Object avg = scriptResult.get(2);
+        if (avg == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(String.valueOf(avg));
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static DefaultRedisScript<List> initScoreAggregateScript() {
+        DefaultRedisScript<List> script = new DefaultRedisScript<>();
+        script.setScriptText(SCORE_AGGREGATE_UPDATE_SCRIPT_TEXT);
+        script.setResultType(List.class);
+        return script;
     }
 }

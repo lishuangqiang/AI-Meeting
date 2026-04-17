@@ -50,6 +50,7 @@ public class InterviewDemeanorService {
         String sessionId = null;
         RLock heavyLock = null;
         try {
+            // 1) 先抢会话级重锁，避免同一 session 并发神态评估互相覆盖。
             heavyLock = interviewAiSessionLockService.acquire(reqDTO.getSessionId(), InterviewAiGuardStage.INTERVIEW_DEMEANOR);
             if (heavyLock == null) {
                 throw new ClientException(
@@ -63,6 +64,7 @@ public class InterviewDemeanorService {
             // Upload image first and get a workflow-readable URL.
             if (reqDTO.getUserPhoto() != null && !reqDTO.getUserPhoto().isEmpty()) {
                 try {
+                    // 2) 上传照片，拿到 AI workflow 可访问的文件 URL。
                     AgentPropertiesDO agentProperties = resolveRequiredAgent(reqDTO);
                     if (agentProperties == null) {
                         throw new ClientException(InterviewErrorCodeEnum.AGENT_CONFIG_NOT_FOUND);
@@ -92,7 +94,7 @@ public class InterviewDemeanorService {
                 throw new ClientException(InterviewErrorCodeEnum.AGENT_CONFIG_NOT_FOUND);
             }
 
-            // Invoke demeanor workflow.
+            // 3) 调用神态工作流并解析结构化分值，最后统一归一化后落缓存。
             String aiResponseStr = interviewAiInvoker.callAiSyncWithFile(
                     promptBuilder,
                     reqDTO.getSessionId() != null ? reqDTO.getSessionId() : "demeanor_" + System.currentTimeMillis(),

@@ -40,10 +40,12 @@ public class InterviewAgentOrchestrationService implements InterviewWorkflowServ
     private final InterviewQuestionLockService interviewQuestionLockService;
 
     public InterviewQuestionRespDTO extractInterviewQuestions(InterviewQuestionReqDTO reqDTO) {
+        // 编排入口：提取链路直接委托 extraction flow。
         return interviewQuestionExtractionService.extractInterviewQuestions(reqDTO);
     }
 
     public InterviewAnswerRespDTO answerInterviewQuestion(String sessionId, InterviewAnswerReqDTO requestParam) {
+        // 编排入口：答题链路统一走 pipeline，避免控制逻辑分散在多个 service。
         return interviewAnswerPipeline.execute(sessionId, requestParam);
     }
 
@@ -66,6 +68,7 @@ public class InterviewAgentOrchestrationService implements InterviewWorkflowServ
         }
 
         try {
+            // 1) 先保证题库可用（缓存 miss 时从 DB 回补）。
             Map<String, String> questions = getOrLoadQuestions(sessionId);
             if (questions == null || questions.isEmpty()) {
                 return response.fail("interview questions not found");
@@ -73,6 +76,7 @@ public class InterviewAgentOrchestrationService implements InterviewWorkflowServ
 
             InterviewFlowState flowState = interviewQuestionCacheService.getInterviewFlow(sessionId);
             if (flowState == null) {
+                // 2) flow 丢失时按 turns 恢复；恢复失败再兜底重建 flow。
                 CurrentQuestionState recoveredState = recoverCurrentQuestionFromTurns(sessionId, questions);
                 if (recoveredState.finished) {
                     Metrics.counter("flow_restore_source_total", "source", "turn_finished").increment();
@@ -102,6 +106,7 @@ public class InterviewAgentOrchestrationService implements InterviewWorkflowServ
                 return response.finish().success();
             }
 
+            // 3) 在当前 flow 上解析题号并回填给前端，不推进游标。
             String questionNumber = interviewFlowStateMachine.currentQuestionNumber(flowState);
             String questionContent = resolveQuestionByNumber(sessionId, questionNumber, questions);
             if (StrUtil.isBlank(questionContent)) {
@@ -216,6 +221,7 @@ public class InterviewAgentOrchestrationService implements InterviewWorkflowServ
         }
         RLock lock = null;
         try {
+            // 1) 先按题号加锁恢复，防止并发恢复互相覆盖。
             lock = interviewQuestionLockService.acquire(sessionId, questionNumber);
             if (lock == null) {
                 return interviewQuestionCacheService.getInterviewFlow(sessionId);
@@ -225,6 +231,7 @@ public class InterviewAgentOrchestrationService implements InterviewWorkflowServ
                 return existingFlowState;
             }
 
+            // 2) 先初始化 flow，再把主问题游标推进到目标主问题。
             interviewQuestionCacheService.initInterviewFlow(sessionId, totalQuestions);
             Integer mainQuestionNo = extractMainQuestionNo(questionNumber);
             if (mainQuestionNo == null || mainQuestionNo <= 0) {
@@ -239,6 +246,7 @@ public class InterviewAgentOrchestrationService implements InterviewWorkflowServ
                 }
             }
 
+            // 3) 如果目标是追问题，再补齐 followUp 次数，保证题号与 flow 状态一致。
             if (isFollowUpQuestion(questionNumber)) {
                 int followUpCount = extractFollowUpCount(questionNumber);
                 for (int index = 0; index < followUpCount; index++) {

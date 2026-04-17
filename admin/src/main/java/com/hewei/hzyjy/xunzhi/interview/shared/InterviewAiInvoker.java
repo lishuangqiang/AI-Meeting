@@ -111,6 +111,8 @@ public class InterviewAiInvoker {
     private String guardedCall(String stage, String singleFlightKey, Callable<String> callable) throws Exception {
         String safeStage = StrUtil.blankToDefault(stage, "interview-default");
         String key = StrUtil.blankToDefault(singleFlightKey, safeStage + "|no-key");
+        // 1) 同 key 请求先做 singleflight 合并，减少重复打 AI。
+        // 2) leader 请求再进入 guard（超时/舱壁/熔断/重试）。
         return interviewAiSingleFlightService.execute(
                 key,
                 () -> aiCallGuardService.execute(safeStage, key, callable)
@@ -124,6 +126,7 @@ public class InterviewAiInvoker {
             String fileUrl,
             Map<String, Object> parameters) throws Exception {
         StringBuilder aiResponse = new StringBuilder();
+        // 3) 最后统一走底层 chat，并把流式片段拼成完整响应字符串返回上层解析。
         xingChenAIClient.chat(
                 input,
                 StrUtil.isNotBlank(sessionId) ? sessionId : "evaluation_" + System.currentTimeMillis(),

@@ -94,6 +94,8 @@ public class AiCallGuardService {
         Bulkhead bulkhead = bulkheads.computeIfAbsent(stage, this::newBulkhead);
         Retry retry = retries.computeIfAbsent(stage, this::newRetry);
 
+        // 装饰顺序固定为：CircuitBreaker -> Bulkhead -> Retry -> TimeLimiter。
+        // 这样既能在入口快速拒绝故障流量，也能把重试限制在限流与超时边界内。
         Callable<T> decorated = CircuitBreaker.decorateCallable(
                 circuitBreaker,
                 Bulkhead.decorateCallable(
@@ -109,6 +111,7 @@ public class AiCallGuardService {
 
     private <T> T callWithTimeLimiter(String stage, Callable<T> action) throws Exception {
         TimeLimiter timeLimiter = timeLimiters.computeIfAbsent(stage, this::newTimeLimiter);
+        // AI I/O 调用放到专用线程池，避免占用业务线程，并由 TimeLimiter 统一裁剪超时。
         Callable<T> timeLimitedCall = TimeLimiter.decorateFutureSupplier(
                 timeLimiter,
                 () -> CompletableFuture.supplyAsync(() -> {
@@ -192,6 +195,7 @@ public class AiCallGuardService {
             return guardException;
         }
 
+        // 统一映射为前端可稳定识别的三类语义，减少各链路各自兜底导致的分支复杂度。
         InterviewAiGuardErrorCode code;
         String message;
         if (cause instanceof TimeoutException) {

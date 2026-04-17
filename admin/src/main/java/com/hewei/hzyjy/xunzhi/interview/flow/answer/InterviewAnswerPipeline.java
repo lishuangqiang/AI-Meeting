@@ -53,25 +53,33 @@ public class InterviewAnswerPipeline {
         ctx.response = InterviewAnswerRespDTO.init();
 
         try {
+            // 1) 基础参数校验。
             if (!validateRequest(ctx)) {
                 return ctx.response;
             }
+            // 2) 归一化 requestId，保证幂等键稳定。
             normalizeRequestId(ctx);
+            // 3) 幂等门禁：命中已成功请求直接回放，处理中请求快速失败。
             if (!stepIdempotency(ctx)) {
                 return ctx.response;
             }
+            // 4) 读取当前题与 flow，拒绝过期题号。
             if (!stepLoadCurrentQuestion(ctx)) {
                 return finishAndReturn(ctx, false);
             }
+            // 5) 以“当前题号”为粒度加锁，串行化同题并发提交。
             if (!stepAcquireQuestionLock(ctx)) {
                 return ctx.response;
             }
+            // 6) 加锁后再次校验题号，避免锁前后游标漂移导致串题。
             if (!stepValidateQuestionAfterLock(ctx)) {
                 return ctx.response;
             }
+            // 7) 调评分链路并提取结构化评分结果（此时仅计算，不入账）。
             if (!stepEvaluateAndScore(ctx)) {
                 return ctx.response;
             }
+            // 8) 推进 flow、提交分数并组装下一题/结束态响应。
             if (!stepAdvanceFlowAndAssemble(ctx)) {
                 return ctx.response;
             }
@@ -293,6 +301,8 @@ public class InterviewAnswerPipeline {
     }
 
     private boolean stepAdvanceFlowAndAssemble(InterviewAnswerPipelineContext ctx) {
+        // 1) 先拍快照：后续若计分提交失败，用于补偿回滚 flow，避免“题号推进成功但分数未入账”。
+        InterviewFlowState flowSnapshotBeforeAdvance = snapshotFlowState(interviewFlowStateMachine.current(ctx.sessionId));
         InterviewFollowUpRuleDecision ruleDecision = decideFollowUp(ctx);
         int resolvedMaxFollowUp = ruleDecision != null && ruleDecision.getResolvedMaxFollowUp() > 0
                 ? ruleDecision.getResolvedMaxFollowUp()
@@ -315,6 +325,7 @@ public class InterviewAnswerPipeline {
                 ruleDecision != null && ruleDecision.isFallback()
         );
 
+        // 2) 按规则优先走追问分支；追问生成失败则自动回落到主问题推进分支。
         if (needFollowUp && ctx.currentFollowUpCount < resolvedMaxFollowUp) {
             InterviewFollowUpService.FollowUpQuestionResult followUpQuestionResult = interviewFollowUpService.generateFollowUpQuestion(
                     ctx.sessionId,
@@ -340,6 +351,7 @@ public class InterviewAnswerPipeline {
                         ? followUpFlow.getFollowUpCount()
                         : followUpQuestionResult.getFollowUpCount();
                 if (!commitScoreAtSuccess(ctx)) {
+                    rollbackFlowAfterCommitFailure(ctx, flowSnapshotBeforeAdvance, "followup");
                     return false;
                 }
                 ctx.response.withNextQuestion(
@@ -352,10 +364,12 @@ public class InterviewAnswerPipeline {
             }
         }
 
+        // 3) 无追问时推进主问题；到末题则标记完成并返回 finish。
         InterviewFlowState nextFlow = interviewFlowStateMachine.advanceMainQuestion(ctx.sessionId);
         if (nextFlow == null || interviewFlowStateMachine.isCompleted(nextFlow)) {
             interviewFlowStateMachine.markCompleted(ctx.sessionId);
             if (!commitScoreAtSuccess(ctx)) {
+                rollbackFlowAfterCommitFailure(ctx, flowSnapshotBeforeAdvance, "finish");
                 return false;
             }
             ctx.response.finish().success();
@@ -370,6 +384,7 @@ public class InterviewAnswerPipeline {
         }
 
         if (!commitScoreAtSuccess(ctx)) {
+            rollbackFlowAfterCommitFailure(ctx, flowSnapshotBeforeAdvance, "next_main");
             return false;
         }
         ctx.response.withNextQuestion(nextQuestionNumber, nextQuestion, false, 0).success();
@@ -378,6 +393,7 @@ public class InterviewAnswerPipeline {
 
     private boolean commitScoreAtSuccess(InterviewAnswerPipelineContext ctx) {
         try {
+            // 追问不计入总分；仅主问题在“返回成功前”提交入账，避免失败重试重复计分。
             Integer committedTotalScore = Boolean.TRUE.equals(ctx.currentIsFollowUp)
                     ? interviewQuestionCacheService.getSessionTotalScore(ctx.sessionId)
                     : interviewQuestionCacheService.addSessionScore(ctx.sessionId, ctx.score);
@@ -390,6 +406,41 @@ public class InterviewAnswerPipeline {
             ctx.response.fail("failed to commit interview score");
             return false;
         }
+    }
+
+    private void rollbackFlowAfterCommitFailure(
+            InterviewAnswerPipelineContext ctx,
+            InterviewFlowState flowSnapshotBeforeAdvance,
+            String branch) {
+        if (flowSnapshotBeforeAdvance == null) {
+            return;
+        }
+        try {
+            // 分数提交失败时，恢复到推进前状态，保证客户端重试仍能命中当前题。
+            interviewQuestionCacheService.restoreInterviewFlow(ctx.sessionId, flowSnapshotBeforeAdvance);
+            Metrics.counter("answer_flow_rollback_total", "branch", StrUtil.blankToDefault(branch, "unknown")).increment();
+            log.warn("Rolled back interview flow after score commit failure, sessionId={}, requestId={}, branch={}",
+                    ctx.sessionId, ctx.requestId, branch);
+        } catch (Exception ex) {
+            log.error("Failed to rollback interview flow after score commit failure, sessionId={}, requestId={}, branch={}",
+                    ctx.sessionId, ctx.requestId, branch, ex);
+        }
+    }
+
+    private InterviewFlowState snapshotFlowState(InterviewFlowState state) {
+        if (state == null) {
+            return null;
+        }
+        // 手动复制，避免后续对象被原地修改导致“快照”失效。
+        InterviewFlowState snapshot = new InterviewFlowState();
+        snapshot.setStatus(state.getStatus());
+        snapshot.setCurrentIndex(state.getCurrentIndex());
+        snapshot.setCurrentQuestionNumber(state.getCurrentQuestionNumber());
+        snapshot.setTotalQuestions(state.getTotalQuestions());
+        snapshot.setFollowUpCount(state.getFollowUpCount());
+        snapshot.setMaxFollowUp(state.getMaxFollowUp());
+        snapshot.setVersion(state.getVersion());
+        return snapshot;
     }
 
     private InterviewFollowUpRuleDecision decideFollowUp(InterviewAnswerPipelineContext ctx) {
