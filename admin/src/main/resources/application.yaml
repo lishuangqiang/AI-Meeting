@@ -171,11 +171,57 @@ xunzhi-agent:
         retry-wait-millis: 0
   ai-singleflight:
     enable: true
+    mode: hybrid
+    distributed-enabled: true
     ttl-millis: 65000
     wait-timeout-millis: 65000
+    stream-block-timeout-millis: 3000
+    poll-fallback-interval-millis: 2000
+    follower-max-wait-millis: 20000
+    l1-cache-max-size: 1000
     cleanup-threshold: 256
     heavy-lock-expire-seconds: 90
-    heavy-lock-wait-millis: 300
+    heavy-lock-wait-millis: 0
+    stage-policies:
+      interview-evaluation:
+        heartbeat-interval-millis: 3000
+        running-ttl-millis: 15000
+        takeover-detect-millis: 10000
+        result-ttl-millis: 600000
+        failed-result-ttl-millis: 60000
+        compression-threshold-bytes: 4096
+        compression-codec: gzip
+        l1-cache-enabled: true
+        l1-cache-ttl-millis: 30000
+      interview-followup:
+        heartbeat-interval-millis: 2500
+        running-ttl-millis: 12000
+        takeover-detect-millis: 8000
+        result-ttl-millis: 180000
+        failed-result-ttl-millis: 30000
+        compression-threshold-bytes: 2048
+        compression-codec: gzip
+        l1-cache-enabled: true
+        l1-cache-ttl-millis: 15000
+      interview-extraction:
+        heartbeat-interval-millis: 4000
+        running-ttl-millis: 20000
+        takeover-detect-millis: 12000
+        result-ttl-millis: 1800000
+        failed-result-ttl-millis: 60000
+        compression-threshold-bytes: 1024
+        compression-codec: gzip
+        l1-cache-enabled: true
+        l1-cache-ttl-millis: 60000
+      interview-demeanor:
+        heartbeat-interval-millis: 5000
+        running-ttl-millis: 30000
+        takeover-detect-millis: 15000
+        result-ttl-millis: 900000
+        failed-result-ttl-millis: 60000
+        compression-threshold-bytes: 2048
+        compression-codec: gzip
+        l1-cache-enabled: false
   interview:
     answer-guard:
       lock-expire-seconds: -1

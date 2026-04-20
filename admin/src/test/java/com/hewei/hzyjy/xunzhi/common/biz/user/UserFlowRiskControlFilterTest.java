@@ -14,6 +14,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -35,7 +36,7 @@ class UserFlowRiskControlFilterTest {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/xunzhi/v1/ai/chat");
         MockHttpServletResponse response = new MockHttpServletResponse();
         when(requestRateLimitKeyResolver.resolve(request)).thenReturn("user:alice");
-        when(requestRateLimitService.tryAcquire("user:alice", any(RequestRateLimitPolicy.class))).thenReturn(true);
+        when(requestRateLimitService.tryAcquire(eq("user:alice"), any(RequestRateLimitPolicy.class))).thenReturn(true);
 
         filter.doFilter(request, response, filterChain);
 
@@ -56,7 +57,7 @@ class UserFlowRiskControlFilterTest {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/xunzhi/v1/interview/answer");
         MockHttpServletResponse response = new MockHttpServletResponse();
         when(requestRateLimitKeyResolver.resolve(request)).thenReturn("user:alice");
-        when(requestRateLimitService.tryAcquire("user:alice", any(RequestRateLimitPolicy.class))).thenReturn(false);
+        when(requestRateLimitService.tryAcquire(eq("user:alice"), any(RequestRateLimitPolicy.class))).thenReturn(false);
 
         filter.doFilter(request, response, filterChain);
 

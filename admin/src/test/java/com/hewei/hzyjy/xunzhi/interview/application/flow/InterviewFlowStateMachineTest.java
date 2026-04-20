@@ -51,10 +51,11 @@ class InterviewFlowStateMachineTest {
         InterviewQuestionCacheService cacheService = mock(InterviewQuestionCacheService.class);
         InterviewFlowStateMachine stateMachine = new InterviewFlowStateMachine(cacheService);
         InterviewFlowState evaluating = state("EVALUATING", 2, 3);
+        InterviewFlowState outOfRange = state("ASKING", 3, 3);
         InterviewFlowState completed = state("COMPLETED", 2, 3);
 
-        when(cacheService.getInterviewFlow("s-3")).thenReturn(evaluating, completed);
-        when(cacheService.advanceToNextQuestion("s-3")).thenReturn(completed);
+        when(cacheService.getInterviewFlow("s-3")).thenReturn(evaluating, outOfRange);
+        when(cacheService.advanceToNextQuestion("s-3")).thenReturn(outOfRange);
         when(cacheService.markInterviewCompleted("s-3")).thenReturn(completed);
 
         InterviewFlowState next = stateMachine.advanceMainQuestion("s-3");

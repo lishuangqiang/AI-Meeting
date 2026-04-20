@@ -15,7 +15,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         classes = ActuatorHealthEndpointTest.TestApplication.class,
         properties = {
                 "management.endpoints.web.exposure.include=health",
-                "management.endpoint.health.probes.enabled=true"
+                "management.endpoint.health.probes.enabled=true",
+                "management.health.db.enabled=false",
+                "management.health.mongo.enabled=false",
+                "management.health.redis.enabled=false",
+                "spring.profiles.include=",
+                "spring.autoconfigure.exclude=cn.dev33.satoken.dao.SaTokenDaoRedisJackson,org.redisson.spring.starter.RedissonAutoConfigurationV2,org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration,org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration,com.yomahub.liteflow.springboot.config.LiteflowMainAutoConfiguration,com.yomahub.liteflow.springboot.config.LiteflowPropertyAutoConfiguration",
+                "spring.data.redis.password=",
+                "spring.data.redis.host=127.0.0.1",
+                "spring.data.redis.port=6379"
         }
 )
 @AutoConfigureMockMvc

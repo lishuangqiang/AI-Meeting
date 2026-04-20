@@ -4,8 +4,8 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
 import com.hewei.hzyjy.xunzhi.interview.application.guard.AiCallGuardService;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.DistributedInterviewAiSingleFlightService;
 import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardStage;
-import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiSingleFlightService;
 import com.hewei.hzyjy.xunzhi.toolkit.xunfei.XingChenAIClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -15,13 +15,19 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.Callable;
 
+/**
+ * 面试 AI 的统一调用入口，负责生成请求指纹、串联限流熔断保护、
+ * 分布式 single-flight 复用以及最终的模型调用过程。
+ *
+ * @author 程序员牛肉
+ */
 @Component
 @RequiredArgsConstructor
 public class InterviewAiInvoker {
 
     private final XingChenAIClient xingChenAIClient;
     private final AiCallGuardService aiCallGuardService;
-    private final InterviewAiSingleFlightService interviewAiSingleFlightService;
+    private final DistributedInterviewAiSingleFlightService distributedInterviewAiSingleFlightService;
 
     public String callAiSync(String prompt, String sessionId, AgentPropertiesDO agentProperties) throws Exception {
         String key = buildSingleFlightKey(InterviewAiGuardStage.INTERVIEW_EVALUATION, sessionId, null, prompt);
@@ -111,9 +117,8 @@ public class InterviewAiInvoker {
     private String guardedCall(String stage, String singleFlightKey, Callable<String> callable) throws Exception {
         String safeStage = StrUtil.blankToDefault(stage, "interview-default");
         String key = StrUtil.blankToDefault(singleFlightKey, safeStage + "|no-key");
-        // 1) 同 key 请求先做 singleflight 合并，减少重复打 AI。
-        // 2) leader 请求再进入 guard（超时/舱壁/熔断/重试）。
-        return interviewAiSingleFlightService.execute(
+        return distributedInterviewAiSingleFlightService.execute(
+                safeStage,
                 key,
                 () -> aiCallGuardService.execute(safeStage, key, callable)
         );
