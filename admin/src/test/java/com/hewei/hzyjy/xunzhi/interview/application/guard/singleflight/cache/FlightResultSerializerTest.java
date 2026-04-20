@@ -1,5 +1,6 @@
-package com.hewei.hzyjy.xunzhi.interview.application.guard;
+package com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.cache;
 
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightStoredResult;
 import com.hewei.hzyjy.xunzhi.interview.config.InterviewAiSingleFlightConfiguration;
 import org.junit.jupiter.api.Test;
 

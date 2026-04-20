@@ -1,6 +1,8 @@
-package com.hewei.hzyjy.xunzhi.interview.application.guard;
+package com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.coordinator;
 
 import cn.hutool.core.util.StrUtil;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightErrorType;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.ReadOffset;

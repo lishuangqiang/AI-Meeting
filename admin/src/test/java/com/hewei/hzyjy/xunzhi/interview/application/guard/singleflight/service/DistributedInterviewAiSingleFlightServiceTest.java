@@ -1,5 +1,16 @@
-package com.hewei.hzyjy.xunzhi.interview.application.guard;
+package com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.service;
 
+import com.hewei.hzyjy.xunzhi.interview.application.guard.core.InterviewAiGuardStage;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.cache.FlightReplayLocalCache;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.cache.FlightResultSerializer;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.coordinator.FlightCoordinatorRepository;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.coordinator.FlightHeartbeatManager;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.coordinator.FlightNotificationService;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightAcquireResult;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightAction;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightMetaSnapshot;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightStatus;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightStoredResult;
 import com.hewei.hzyjy.xunzhi.interview.config.InterviewAiSingleFlightConfiguration;
 import org.junit.jupiter.api.Test;
 

@@ -1,5 +1,6 @@
-package com.hewei.hzyjy.xunzhi.interview.application.guard;
+package com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.coordinator;
 
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightOwnerContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;

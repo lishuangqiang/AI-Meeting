@@ -59,15 +59,16 @@ public class Threads {
         if (t == null && r instanceof Future<?>) {
             try {
                 Future<?> future = (Future<?>) r;
-                if (future.isDone()) {
+                if (future.isDone() && !future.isCancelled()) {
                     future.get();
                 }
             } catch (CancellationException ce) {
-                t = ce;
+                return;
             } catch (ExecutionException ee) {
                 t = ee.getCause();
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
+                return;
             }
         }
         if (t != null) {

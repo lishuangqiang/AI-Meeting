@@ -9,7 +9,7 @@ import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewAnswerReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewAnswerRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.shared.InterviewResponseParser;
 import com.hewei.hzyjy.xunzhi.interview.application.flow.InterviewFlowStateMachine;
-import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardException;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.core.InterviewAiGuardException;
 import com.hewei.hzyjy.xunzhi.interview.application.rule.InterviewFollowUpRuleContext;
 import com.hewei.hzyjy.xunzhi.interview.application.rule.InterviewFollowUpRuleDecision;
 import com.hewei.hzyjy.xunzhi.interview.application.rule.InterviewFollowUpRuleService;

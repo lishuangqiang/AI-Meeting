@@ -1,6 +1,6 @@
 package com.hewei.hzyjy.xunzhi.interview.config;
 
-import com.hewei.hzyjy.xunzhi.interview.application.guard.InterviewAiGuardStage;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.core.InterviewAiGuardStage;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;

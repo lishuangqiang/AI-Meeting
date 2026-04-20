@@ -1,6 +1,12 @@
-package com.hewei.hzyjy.xunzhi.interview.application.guard;
+package com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.coordinator;
 
 import cn.hutool.core.util.StrUtil;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightAcquireResult;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightAction;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightErrorType;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightMetaSnapshot;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightStatus;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightStoredResult;
 import com.hewei.hzyjy.xunzhi.interview.config.InterviewAiSingleFlightConfiguration;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;

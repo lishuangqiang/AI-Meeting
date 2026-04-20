@@ -1,7 +1,8 @@
-package com.hewei.hzyjy.xunzhi.interview.application.guard;
+package com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.cache;
 
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
+import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.FlightStoredResult;
 import com.hewei.hzyjy.xunzhi.interview.config.InterviewAiSingleFlightConfiguration;
 import org.springframework.stereotype.Component;
 

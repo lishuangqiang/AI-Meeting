@@ -1,4 +1,4 @@
-package com.hewei.hzyjy.xunzhi.interview.application.guard;
+package com.hewei.hzyjy.xunzhi.interview.application.guard.lock;
 
 import cn.hutool.core.util.StrUtil;
 import com.hewei.hzyjy.xunzhi.interview.config.InterviewAiSingleFlightConfiguration;

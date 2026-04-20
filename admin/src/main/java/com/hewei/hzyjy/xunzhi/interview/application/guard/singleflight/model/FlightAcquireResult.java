@@ -1,4 +1,4 @@
-package com.hewei.hzyjy.xunzhi.interview.application.guard;
+package com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model;
 
 import lombok.Builder;
 import lombok.Value;

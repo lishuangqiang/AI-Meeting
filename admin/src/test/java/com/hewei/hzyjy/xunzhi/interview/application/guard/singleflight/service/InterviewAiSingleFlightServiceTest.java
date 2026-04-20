@@ -1,4 +1,4 @@
-package com.hewei.hzyjy.xunzhi.interview.application.guard;
+package com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.service;
 
 import com.hewei.hzyjy.xunzhi.interview.config.InterviewAiSingleFlightConfiguration;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;

@@ -1,4 +1,4 @@
-package com.hewei.hzyjy.xunzhi.interview.application.guard;
+package com.hewei.hzyjy.xunzhi.interview.application.guard.core;
 
 /**
  * Internal AI guard error categories.
