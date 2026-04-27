@@ -3,6 +3,7 @@ package com.hewei.hzyjy.xunzhi.media.infrastructure.websocket;
 import com.alibaba.fastjson2.JSON;
 import com.hewei.hzyjy.xunzhi.auth.application.WebSocketAuthService;
 import com.hewei.hzyjy.xunzhi.media.infrastructure.integration.XunfeiAudioService;
+import com.hewei.hzyjy.xunzhi.media.infrastructure.integration.XunfeiAudioService.RealtimeTranscriptionUpdate;
 import jakarta.websocket.CloseReason;
 import jakarta.websocket.OnClose;
 import jakarta.websocket.OnError;
@@ -30,6 +31,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Real-time speech-to-text WebSocket endpoint.
@@ -262,12 +264,15 @@ public class AudioTranscriptionWebSocketHandler {
             PipedInputStream audioInputStream = new PipedInputStream(64 * 1024);
             PipedOutputStream audioOutputStream = new PipedOutputStream(audioInputStream);
             AtomicBoolean active = new AtomicBoolean(true);
+            TranscriptionSessionContext context = new TranscriptionSessionContext(audioInputStream, audioOutputStream, active);
 
-            CompletableFuture<String> future = xunfeiAudioService.realTimeAudioToText(audioInputStream, partial ->
-                    sendMessage(session, createResponse("transcription", "Partial snapshot", partial, true))
+            CompletableFuture<String> future = xunfeiAudioService.realTimeAudioToText(audioInputStream, update ->
+                    {
+                        context.lastUpdate.set(update);
+                        sendMessage(session, createResponse("transcription", "Partial snapshot", update, true));
+                    }
             );
 
-            TranscriptionSessionContext context = new TranscriptionSessionContext(audioInputStream, audioOutputStream, active);
             future.whenComplete((finalResult, throwable) -> {
                 if (throwable != null && !isExpectedStopException(context, throwable)) {
                     log.error("Transcription failed, userId={}, sessionId={}", userId, sessionId, throwable);
@@ -275,7 +280,8 @@ public class AudioTranscriptionWebSocketHandler {
                 } else {
                     log.info("Transcription finished, userId={}, sessionId={}", userId, sessionId);
                     if (!context.stopRequested.get() && finalResult != null) {
-                        sendMessage(session, createResponse("final", "Transcription completed", finalResult, true));
+                        sendMessage(session, createResponse("final", "Transcription completed",
+                                buildFinalUpdate(finalResult, context.lastUpdate.get()), true));
                     }
                 }
                 cleanupTranscriptionContext(sessionId, context);
@@ -385,10 +391,77 @@ public class AudioTranscriptionWebSocketHandler {
         response.setType(type);
         response.setMessage(message);
         response.setData(data);
+        response.setFullText(resolveFullText(type, data));
         response.setIsSnapshot(isSnapshot);
         response.setUpdateAction(resolveUpdateAction(type));
         response.setTimestamp(System.currentTimeMillis());
         return JSON.toJSONString(response);
+    }
+
+    private String createResponse(String type,
+                                  String message,
+                                  RealtimeTranscriptionUpdate update,
+                                  boolean isSnapshot) {
+        WebSocketResponse response = new WebSocketResponse();
+        response.setType(type);
+        response.setMessage(message);
+        response.setData(update != null ? update.fullText() : null);
+        response.setFullText(update != null ? update.fullText() : null);
+        response.setDisplayText(update != null ? update.displayText() : null);
+        response.setCommittedText(update != null ? update.committedText() : null);
+        response.setLiveText(update != null ? update.liveText() : null);
+        response.setRevision(update != null ? update.revision() : null);
+        response.setResultStatus(update != null ? update.resultStatus() : null);
+        response.setIsSnapshot(isSnapshot);
+        response.setUpdateAction(resolveUpdateAction(type));
+        response.setTimestamp(System.currentTimeMillis());
+        if (update != null) {
+            response.setSegmentId(update.segmentId());
+            response.setSentenceSeq(update.segmentId());
+            response.setSegmentText(update.segmentText());
+            response.setPgs(update.pgs());
+            response.setRg(update.rg());
+            response.setBg(update.bg());
+            response.setEd(update.ed());
+            response.setIsFinalPacket(update.finalPacket());
+        }
+        return JSON.toJSONString(response);
+    }
+
+    private RealtimeTranscriptionUpdate buildFinalUpdate(String finalResult,
+                                                         RealtimeTranscriptionUpdate lastUpdate) {
+        if (lastUpdate == null) {
+            return new RealtimeTranscriptionUpdate(
+                    finalResult,
+                    finalResult,
+                    "",
+                    finalResult,
+                    1,
+                    "final",
+                    0,
+                    finalResult,
+                    null,
+                    null,
+                    null,
+                    null,
+                    true
+            );
+        }
+        return new RealtimeTranscriptionUpdate(
+                finalResult,
+                finalResult,
+                "",
+                finalResult,
+                lastUpdate.revision() != null ? lastUpdate.revision() + 1 : 1,
+                "final",
+                lastUpdate.segmentId(),
+                lastUpdate.segmentText(),
+                lastUpdate.pgs(),
+                lastUpdate.rg(),
+                lastUpdate.bg(),
+                lastUpdate.ed(),
+                true
+        );
     }
 
     private static String createStaticResponse(String type, String message, String data) {
@@ -396,10 +469,18 @@ public class AudioTranscriptionWebSocketHandler {
         response.setType(type);
         response.setMessage(message);
         response.setData(data);
+        response.setFullText(resolveFullText(type, data));
         response.setIsSnapshot(false);
         response.setUpdateAction(resolveUpdateAction(type));
         response.setTimestamp(System.currentTimeMillis());
         return JSON.toJSONString(response);
+    }
+
+    private static String resolveFullText(String type, String data) {
+        if ("transcription".equals(type) || "final".equals(type)) {
+            return data;
+        }
+        return null;
     }
 
     private static String resolveUpdateAction(String type) {
@@ -417,9 +498,23 @@ public class AudioTranscriptionWebSocketHandler {
         private String type;
         private String message;
         private String data;
+        private String fullText;
+        private String displayText;
+        private String committedText;
+        private String liveText;
+        private Integer revision;
+        private String resultStatus;
         private Boolean isSnapshot;
         private String updateAction;
         private Long timestamp;
+        private Integer segmentId;
+        private Integer sentenceSeq;
+        private String segmentText;
+        private String pgs;
+        private int[] rg;
+        private Integer bg;
+        private Integer ed;
+        private Boolean isFinalPacket;
     }
 
     @Data
@@ -432,6 +527,7 @@ public class AudioTranscriptionWebSocketHandler {
         private final PipedOutputStream audioOutputStream;
         private final AtomicBoolean active;
         private final AtomicBoolean stopRequested = new AtomicBoolean(false);
+        private final AtomicReference<RealtimeTranscriptionUpdate> lastUpdate = new AtomicReference<>();
 
         private TranscriptionSessionContext(PipedInputStream audioInputStream,
                                             PipedOutputStream audioOutputStream,

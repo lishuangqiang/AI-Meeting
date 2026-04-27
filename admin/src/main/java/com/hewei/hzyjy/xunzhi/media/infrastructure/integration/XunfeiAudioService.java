@@ -180,6 +180,7 @@ public class XunfeiAudioService {
         AstTranscriptionAssembler assembler = new AstTranscriptionAssembler();
         AtomicInteger fallbackSn = new AtomicInteger(0);
         AtomicInteger rawPacketCounter = new AtomicInteger(0);
+        AtomicInteger revisionCounter = new AtomicInteger(0);
         StringBuilder latestDisplay = new StringBuilder();
         Request request = new Request.Builder().url(wsUrl).build();
         WS_CLIENT.newWebSocket(request, new WebSocketListener() {
@@ -208,19 +209,41 @@ public class XunfeiAudioService {
 
                     JSONObject st = extractAstSt(root);
                     String partialText = extractAstText(root);
+                    int segmentId = resolveSegmentId(root, st, fallbackSn);
+                    String pgs = st != null ? st.getString("pgs") : null;
+                    Integer bg = st != null ? st.getInteger("bg") : null;
+                    Integer ed = st != null ? st.getInteger("ed") : null;
+                    int[] rg = extractRg(st);
+                    boolean finalPacket = isAstFinal(root);
                     if (StrUtil.isNotBlank(partialText)) {
-                        assembler.apply(root, st, partialText, fallbackSn);
+                        assembler.apply(segmentId, pgs, rg, bg, ed, partialText, finalPacket);
                         String merged = assembler.buildSnapshot();
                         if (!merged.equals(latestDisplay.toString())) {
+                            String committedText = assembler.buildCommittedText(segmentId, finalPacket);
+                            String liveText = assembler.buildLiveText(committedText, merged, partialText, finalPacket);
                             latestDisplay.setLength(0);
                             latestDisplay.append(merged);
                             if (callback != null) {
-                                callback.onResult(merged);
+                                callback.onResult(new RealtimeTranscriptionUpdate(
+                                        merged,
+                                        committedText,
+                                        liveText,
+                                        merged,
+                                        revisionCounter.incrementAndGet(),
+                                        finalPacket ? "final" : "partial",
+                                        segmentId,
+                                        partialText,
+                                        pgs,
+                                        rg,
+                                        bg,
+                                        ed,
+                                        finalPacket
+                                ));
                             }
                         }
                     }
 
-                    if (isAstFinal(root)) {
+                    if (finalPacket) {
                         if (!future.isDone()) {
                             String finalText = assembler.buildSnapshot();
                             if (StrUtil.isBlank(finalText)) {
@@ -366,15 +389,7 @@ public class XunfeiAudioService {
             return;
         }
 
-        SegmentState sameRange = findExactRangeState(sentencePool, bg, ed);
-        if (sameRange != null && isPunctuationOnly(text) && StrUtil.isNotBlank(sameRange.text)) {
-            sameRange.text = appendTrailingPunctuation(sameRange.text, text);
-            sameRange.finalized = sameRange.finalized || finalized;
-            sameRange.updatedAt = System.currentTimeMillis();
-            return;
-        }
-
-        removeOverlappingRangeStates(sentencePool, bg, ed);
+        sentencePool.clear();
         upsertAstSegment(sentencePool, sn, text, finalized);
         SegmentState state = sentencePool.get(sn);
         if (state != null) {
@@ -617,25 +632,59 @@ public class XunfeiAudioService {
     private final class AstTranscriptionAssembler {
         private final TreeMap<Integer, SegmentState> segments = new TreeMap<>();
 
-        private void apply(JSONObject root,
-                           JSONObject st,
+        private void apply(int segmentId,
+                           String pgs,
+                           int[] rg,
+                           Integer bg,
+                           Integer ed,
                            String text,
-                           AtomicInteger fallbackSn) {
-            int segmentId = resolveSegmentId(root, st, fallbackSn);
-            String pgs = st != null ? st.getString("pgs") : null;
-            Integer bg = st != null ? st.getInteger("bg") : null;
-            Integer ed = st != null ? st.getInteger("ed") : null;
-            boolean finalized = isAstFinal(root);
+                           boolean finalized) {
             if (StrUtil.isBlank(pgs)) {
                 applyAstSegmentWithoutPgs(segments, segmentId, bg, ed, text, finalized);
                 return;
             }
-            int[] rg = extractRg(st);
             applyAstSegment(segments, segmentId, pgs, rg, text, finalized);
         }
 
         private String buildSnapshot() {
             return buildFinalResult(segments);
+        }
+
+        private String buildCommittedText(int activeSegmentId, boolean finalPacket) {
+            if (finalPacket) {
+                return buildSnapshot();
+            }
+            if (segments.isEmpty()) {
+                return "";
+            }
+
+            StringBuilder committed = new StringBuilder();
+            for (SegmentState segment : segments.values()) {
+                if (segment == null || segment.text == null) {
+                    continue;
+                }
+                if (segment.segId < activeSegmentId || segment.finalized) {
+                    committed.append(segment.text);
+                }
+            }
+            return committed.toString();
+        }
+
+        private String buildLiveText(String committedText,
+                                     String displayText,
+                                     String segmentText,
+                                     boolean finalPacket) {
+            if (finalPacket) {
+                return "";
+            }
+            if (StrUtil.isBlank(displayText)) {
+                return "";
+            }
+            String committed = committedText != null ? committedText : "";
+            if (!committed.isEmpty() && displayText.startsWith(committed)) {
+                return displayText.substring(committed.length());
+            }
+            return segmentText != null ? segmentText : displayText;
         }
     }
 
@@ -706,6 +755,21 @@ public class XunfeiAudioService {
     }
 
     public interface AudioResultCallback {
-        void onResult(String result);
+        void onResult(RealtimeTranscriptionUpdate result);
+    }
+
+    public record RealtimeTranscriptionUpdate(String fullText,
+                                              String committedText,
+                                              String liveText,
+                                              String displayText,
+                                              Integer revision,
+                                              String resultStatus,
+                                              Integer segmentId,
+                                              String segmentText,
+                                              String pgs,
+                                              int[] rg,
+                                              Integer bg,
+                                              Integer ed,
+                                              boolean finalPacket) {
     }
 }
