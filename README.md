@@ -18,6 +18,10 @@
 
 演示视频：[Bilibili 项目展示]( https://www.bilibili.com/video/BV1ccR9B9EEm/?share_source=copy_web&vd_source=2147a1677cc5a940112d07c6f03c4bc9)
 
+前端仓库链接：https://github.com/lishuangqiang/AI-Meeting-Frontend
+
+后端仓库链接：https://github.com/lishuangqiang/AI-Meeting/tree/main
+
 ## 系统架构：
 ![系统架构图](docs/assets/项目架构图.svg)
 
