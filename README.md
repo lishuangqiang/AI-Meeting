@@ -1,29 +1,44 @@
-# 讯智 AI 智能助手后端
+<div align="center">
+
+**码上面试平台** - 基于大语言模型的简历分析、模拟面试服务
+[![Java](https://img.shields.io/badge/Java-21-orange?logo=openjdk)](https://openjdk.org/)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.0-green?logo=springboot)](https://spring.io/projects/spring-boot)
+[![React](https://img.shields.io/badge/React-18.3-blue?logo=react)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue?logo=typescript)](https://www.typescriptlang.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-336791?logo=postgresql)](https://www.postgresql.org/)
+</div>
 
 ![项目概览](docs/assets/repo-showcase.svg)
 
-一个面向 AI 对话、智能体会话、面试编排、语音转写和长文本语音合成场景的 Spring Boot 3 后端项目。仓库目标不是仅仅“能跑通业务”，而是以展示级开源作品的标准呈现完整的后端工程能力：清晰分层、稳定接口、可本地运行、可 Docker 部署、可协作维护。
+这是一个基于 Spring Boot 3 + Java 17 + Spring AI + MySQL + MongoDB + Redis 构建的 AI 智能助手后端项目，聚焦 AI 对话、智能体会话、模拟面试、实时语音转写和长文本语音合成等场景。项目采用模块化单体架构，支持 HTTP、SSE、WebSocket 多链路交互，兼顾业务完整性、工程规范性和开箱即用性。
 
-演示视频：[Bilibili 项目展示](https://www.bilibili.com/video/BV1o7nXzVEVm/)
+演示视频：[Bilibili 项目展示]( https://www.bilibili.com/video/BV1ccR9B9EEm/?share_source=copy_web&vd_source=2147a1677cc5a940112d07c6f03c4bc9)
 
-## 核心亮点
+## 系统架构：
+![系统架构图](docs\assets\项目架构图.svg)
 
-- 模块化单体架构，按 `auth / ai / agent / interview / conversation / media / shared` 收敛职责边界
-- 同时支持 HTTP、SSE、WebSocket 三类交互链路
-- 覆盖 AI 对话、智能体会话、面试问答编排、实时语音转写、长文本 TTS 等核心能力
-- 提供本地开发链路和 Docker 一键演示链路
-- 使用 GitHub Actions 执行统一 `mvn verify` 校验
-- 主文档、接口总览、架构说明全部收敛到仓库内 Markdown 文档
+## 简历写法
 
-## 演示导览
+1. 负责 AI 面试答题主链路设计，串联评分/追问 Agent 协同工作，基于 EnumMap 状态机 + LiteFlow 规则链 实现追问裁决与流程推进；设计题级分布式锁 + 幂等防重 + 答题轮次异步补偿机制，保障答题闭环的数据一致性。
+2. 主导 AI 面试长会话状态治理与恢复架构升级，基于 Mongo Snapshot + Redis 懒加载 构建可恢复运行态体系，并引入热冷分层、CAS 并发保护与恢复幂等补偿，解决 Redis 异常导致的会话中断与状态丢失问题。
+3. 设计并实现面试 AI 分布式 Single-flight框架，基于 Redis Lua、状态机与 Fencing Token 实现多实例场景下同请求跨节点去重、结果回放、失败分类和超时接管；已接入评分、追问、抽题、神态分析等链路，并结合 心跳机制 和本地降级机制提升 AI 调用稳定性与成本控制能力。
+4. 设计并优化基于 WebSocket + Xunfei AST 的实时 ASR 链路，实现分段增量去重，解决重复文本等问题，借鉴 NIO Buffer 的异步缓冲思想设计会话级 TranscriptionSessionContext，实现音频接收与下游推流解耦，并基于 TreeMap + seg_id/pgs/rg/bg/ed 完成分段增量去重与有序重建，解决重复文本、前缀误删和结果抖动问题
+5. 设计并推动面向 AI Coding 的 Skill 业务知识体系，将分散、过时、不可持续维护的传统文档升级为可被 Code Agent 直接消费的模块化业务知识单元，解决复杂业务开发中的知识断层与隐性规则丢失问题。
 
-建议按下面顺序浏览仓库：
+## 在哪购买？
 
-1. 先看本页，了解项目定位、能力范围和运行方式
-2. 再看 [快速启动指南](docs/quick-start-zh.md)
-3. 然后看 [后端接口总览](docs/backend-api-overview-zh.md)
-4. 最后看 [后端架构说明](docs/backend-architecture-zh.md)
-5. 面试链路细节可看 [Agent 面试流程图与架构图](docs/agent-interview-flow-architecture-zh.md)
+本项目承诺完整功能免费开源，也不会做所谓的 Pro 版或“付费解锁核心功能”之类的设计。
+
+如果你想学习这个项目，或者希望把它作为个人项目经历 / 毕设选题，我也整理了一套相对细致的教程：从基础设施搭建、核心业务实现，到最后如何在面试中讲清楚思路与亮点，尽量把容易卡住的地方讲透。
+
+如果你确实需要更系统的辅导，可以前往抖音/小红书搜索程序员牛肉，在我的店铺中购买对应飞书文档。
+
+# 文档展示
+
+![文档首页截图](docs\assets\文档首页截图.png)
+![文档部分截图](docs\assets\文档截图.png)
+![文档部分截图](docs\assets\文档截图2.png)
+
 
 ## 架构简图
 
@@ -63,75 +78,6 @@ flowchart LR
 - Sa-Token
 - WebSocket / SSE
 - Maven / GitHub Actions / Docker Compose
-
-## 快速开始
-
-### 方式一：Docker 演示链路
-
-```bash
-docker compose up -d --build
-curl http://localhost:8002/actuator/health
-```
-
-默认端口：
-
-- backend: `8002`
-- MySQL: `3306`
-- MongoDB: `27017`
-- Redis: `6379`
-
-### 方式二：本地开发链路
-
-前置依赖：
-
-- JDK 17+
-- Maven Wrapper
-- MySQL 8+
-- MongoDB 7+
-- Redis 7+
-
-启动命令：
-
-```bash
-./mvnw -B -ntp clean verify
-./mvnw -B -ntp -pl admin -am spring-boot:run
-curl http://localhost:8002/actuator/health
-```
-
-更详细的环境准备、数据库说明和启动步骤见 [快速启动指南](docs/quick-start-zh.md)。
-
-## 接口文档入口
-
-- [快速启动指南](docs/quick-start-zh.md)
-- [后端接口总览](docs/backend-api-overview-zh.md)
-- [后端架构说明](docs/backend-architecture-zh.md)
-- [Agent 面试流程图与架构图](docs/agent-interview-flow-architecture-zh.md)
-
-仓库中保留了更细的联调、PRD 和分阶段实施文档，统一放在 [`docs/`](docs/) 目录下。
-
-## 目录说明
-
-```text
-virtual-character-backend/
-├─ admin/                      # 后端主应用模块
-│  ├─ src/main/java/           # 业务代码
-│  ├─ src/main/resources/      # 配置、SQL、Mapper
-│  └─ src/test/java/           # 单元测试与边界校验
-├─ docs/                       # 项目文档与展示素材
-├─ .github/                    # CI、Issue/PR 模板
-├─ Dockerfile                  # 后端镜像构建
-├─ docker-compose.yml          # 本地演示环境编排
-└─ pom.xml                     # Maven 聚合工程
-```
-
-## 运行与存储目录
-
-- 健康检查：`GET /actuator/health`
-- 上传临时目录：`xunzhi-agent.storage.upload-temp-dir`
-- 音频临时目录：`xunzhi-agent.storage.audio-temp-dir`
-- 日志目录：`xunzhi-agent.storage.log-dir`
-
-默认情况下，这些目录会落在用户目录下的 `.xunzhi-agent/`，避免向源码目录写入运行时文件。Docker 运行时则挂载到容器内 `/app/data` 和 `/app/logs`。
 
 ## 测试与 CI
 

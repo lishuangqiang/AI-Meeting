@@ -1,0 +1,261 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2100" height="1280" viewBox="0 0 2100 1280">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#111111"/>
+    </marker>
+    <style>
+      .bg { fill: #ffffff; }
+      .title {
+        font: 700 22px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+        fill: #111111;
+      }
+      .subtitle {
+        font: 500 14px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+        fill: #666666;
+      }
+      .section {
+        font: 700 20px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+        fill: #111111;
+      }
+      .box-title {
+        font: 700 16px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+        fill: #111111;
+      }
+      .box-text {
+        font: 500 13px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+        fill: #222222;
+      }
+      .small {
+        font: 500 12px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+        fill: #555555;
+      }
+      .label {
+        font: 500 14px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+        fill: #444444;
+      }
+      .front-outline { fill: #f9fbff; stroke: #5f8ed8; stroke-width: 1.5; }
+      .front-head { fill: #dce8f8; stroke: #5f8ed8; stroke-width: 1.5; }
+      .back-outline { fill: #f8fcf7; stroke: #6cab55; stroke-width: 1.5; }
+      .back-head { fill: #d7ead0; stroke: #6cab55; stroke-width: 1.5; }
+      .ai-outline { fill: #faf6ff; stroke: #9c72c4; stroke-width: 1.5; }
+      .ai-head { fill: #d9cde4; stroke: #9c72c4; stroke-width: 1.5; }
+      .api-strip { fill: #ffffff; stroke: #7fb85e; stroke-width: 1.3; }
+      .svc-box { fill: #ffffff; stroke: #7fb85e; stroke-width: 1.3; }
+      .cap-wrap { fill: #fff9e9; stroke: #e0b84e; stroke-width: 1.4; }
+      .cap-head { fill: #fff1c9; stroke: #e0b84e; stroke-width: 1.4; }
+      .cap-box { fill: #ffffff; stroke: #e0b84e; stroke-width: 1.2; }
+      .rt-wrap { fill: #f7f4ec; stroke: #606060; stroke-width: 1.4; }
+      .rt-box { fill: #ffffff; stroke: #7a7a7a; stroke-width: 1.2; }
+      .infra-strip { fill: #fff1c9; stroke: #e0b84e; stroke-width: 1.4; }
+      .resume-box { fill: #fff1e0; stroke: #e39d00; stroke-width: 1.3; }
+      .agent-box { fill: #f0e3ff; stroke: #9c72c4; stroke-width: 1.3; }
+      .interview-box { fill: #f9dede; stroke: #d96459; stroke-width: 1.3; }
+      .voice-box { fill: #e4f3ff; stroke: #5b95d6; stroke-width: 1.3; }
+      .cyl-red-body { fill: #f7d3d3; stroke: #d96459; stroke-width: 1.4; }
+      .cyl-red-top { fill: #ffe5e5; stroke: #d96459; stroke-width: 1.4; }
+      .cyl-green-body { fill: #dbeed3; stroke: #6cab55; stroke-width: 1.4; }
+      .cyl-green-top { fill: #e9f7e3; stroke: #6cab55; stroke-width: 1.4; }
+      .cyl-blue-body { fill: #d9e8ff; stroke: #5f8ed8; stroke-width: 1.4; }
+      .cyl-blue-top { fill: #e8f0ff; stroke: #5f8ed8; stroke-width: 1.4; }
+      .cyl-purple-body { fill: #e8dcf2; stroke: #9c72c4; stroke-width: 1.4; }
+      .cyl-purple-top { fill: #f1e8f8; stroke: #9c72c4; stroke-width: 1.4; }
+      .line { stroke: #111111; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .dashed { stroke: #111111; stroke-width: 2; fill: none; stroke-dasharray: 10 8; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="2100" height="1280"/>
+
+  <!-- Frontend / caller -->
+  <g transform="translate(20 20)">
+    <rect class="front-outline" x="0" y="0" width="1520" height="210" rx="24"/>
+    <rect class="front-head" x="0" y="0" width="1520" height="52" rx="24"/>
+    <rect fill="#dce8f8" x="0" y="26" width="1520" height="26"/>
+    <text class="section" x="760" y="33" text-anchor="middle">接入层（Frontend / Caller）</text>
+
+    <text class="small" x="165" y="92" text-anchor="middle">AI 对话</text>
+    <text class="small" x="470" y="92" text-anchor="middle">智能体</text>
+    <text class="small" x="852" y="92" text-anchor="middle">面试</text>
+    <text class="small" x="1278" y="92" text-anchor="middle">语音与实时链路</text>
+
+    <rect class="resume-box" x="24" y="118" width="150" height="64" rx="12"/>
+    <text class="box-title" x="99" y="156" text-anchor="middle">AI 对话</text>
+
+    <rect class="resume-box" x="184" y="118" width="130" height="64" rx="12"/>
+    <text class="box-title" x="249" y="156" text-anchor="middle">会话历史</text>
+
+    <rect class="agent-box" x="360" y="118" width="150" height="64" rx="12"/>
+    <text class="box-title" x="435" y="156" text-anchor="middle">智能体会话</text>
+
+    <rect class="agent-box" x="520" y="118" width="140" height="64" rx="12"/>
+    <text class="box-title" x="590" y="156" text-anchor="middle">文件上传</text>
+
+    <rect class="interview-box" x="710" y="118" width="150" height="64" rx="12"/>
+    <text class="box-title" x="785" y="156" text-anchor="middle">面试会话</text>
+
+    <rect class="interview-box" x="870" y="118" width="150" height="64" rx="12"/>
+    <text class="box-title" x="945" y="156" text-anchor="middle">答题与追问</text>
+
+    <rect class="interview-box" x="1030" y="118" width="150" height="64" rx="12"/>
+    <text class="box-title" x="1105" y="156" text-anchor="middle">恢复与报告</text>
+
+    <rect class="voice-box" x="1220" y="118" width="130" height="64" rx="12"/>
+    <text class="box-title" x="1285" y="156" text-anchor="middle">语音转写</text>
+
+    <rect class="voice-box" x="1360" y="118" width="130" height="64" rx="12"/>
+    <text class="box-title" x="1425" y="156" text-anchor="middle">TTS / 推送</text>
+  </g>
+
+  <!-- Arrow frontend to backend -->
+  <path class="line" d="M 780 230 L 780 360"/>
+  <path class="line" d="M 780 360 L 780 230"/>
+  <text class="label" x="780" y="322" text-anchor="middle">HTTP / SSE / WebSocket</text>
+
+  <!-- Backend -->
+  <g transform="translate(0 360)">
+    <rect class="back-outline" x="0" y="0" width="1580" height="590" rx="24"/>
+    <rect class="back-head" x="0" y="0" width="1580" height="52" rx="24"/>
+    <rect fill="#d7ead0" x="0" y="26" width="1580" height="26"/>
+    <text class="section" x="790" y="33" text-anchor="middle">Backend（Spring Boot 3 + Java 17）</text>
+
+    <rect class="api-strip" x="32" y="74" width="1510" height="54"/>
+    <text class="title" x="787" y="107" text-anchor="middle">REST Controllers + SSE + WebSocket + Sa-Token</text>
+
+    <!-- service modules -->
+    <rect class="svc-box" x="24" y="148" width="220" height="72"/>
+    <text class="box-title" x="134" y="180" text-anchor="middle">用户与认证</text>
+    <text class="box-title" x="134" y="204" text-anchor="middle">User / Auth</text>
+
+    <rect class="svc-box" x="260" y="148" width="220" height="72"/>
+    <text class="box-title" x="370" y="180" text-anchor="middle">AI 对话服务</text>
+    <text class="box-title" x="370" y="204" text-anchor="middle">AI Service</text>
+
+    <rect class="svc-box" x="496" y="148" width="220" height="72"/>
+    <text class="box-title" x="606" y="180" text-anchor="middle">智能体服务</text>
+    <text class="box-title" x="606" y="204" text-anchor="middle">Agent Service</text>
+
+    <rect class="svc-box" x="732" y="148" width="220" height="72"/>
+    <text class="box-title" x="842" y="180" text-anchor="middle">面试编排服务</text>
+    <text class="box-title" x="842" y="204" text-anchor="middle">Interview Service</text>
+
+    <rect class="svc-box" x="968" y="148" width="220" height="72"/>
+    <text class="box-title" x="1078" y="180" text-anchor="middle">通用会话服务</text>
+    <text class="box-title" x="1078" y="204" text-anchor="middle">Conversation Service</text>
+
+    <rect class="svc-box" x="1204" y="148" width="308" height="72"/>
+    <text class="box-title" x="1358" y="180" text-anchor="middle">媒体与语音服务</text>
+    <text class="box-title" x="1358" y="204" text-anchor="middle">Media / Xunfei Service</text>
+
+    <!-- AI capabilities -->
+    <g transform="translate(32 242)">
+      <rect class="cap-wrap" x="0" y="0" width="1510" height="136" rx="18"/>
+      <rect class="cap-head" x="0" y="0" width="1510" height="36" rx="18"/>
+      <rect fill="#fff1c9" x="0" y="18" width="1510" height="18"/>
+      <text class="box-title" x="755" y="24" text-anchor="middle">AI 能力与编排</text>
+
+      <rect class="cap-box" x="18" y="48" width="340" height="52" rx="10"/>
+      <text class="box-text" x="188" y="79" text-anchor="middle">Spring AI + AI Properties / 模型配置</text>
+
+      <rect class="cap-box" x="374" y="48" width="340" height="52" rx="10"/>
+      <text class="box-text" x="544" y="79" text-anchor="middle">BusinessAgentResolver + Agent Binding</text>
+
+      <rect class="cap-box" x="730" y="48" width="360" height="52" rx="10"/>
+      <text class="box-text" x="910" y="79" text-anchor="middle">InterviewAiInvoker + Response Parser</text>
+
+      <rect class="cap-box" x="1106" y="48" width="386" height="52" rx="10"/>
+      <text class="box-text" x="1299" y="79" text-anchor="middle">LiteFlow + Distributed SingleFlight + Ai Guard</text>
+    </g>
+
+    <!-- runtime / governance -->
+    <g transform="translate(32 398)">
+      <rect class="rt-wrap" x="0" y="0" width="1510" height="128" rx="18"/>
+      <text class="box-title" x="755" y="28" text-anchor="middle">运行态治理（Redis Runtime + Snapshot + Recovery）</text>
+
+      <rect class="rt-box" x="16" y="44" width="350" height="56" rx="9"/>
+      <text class="box-text" x="191" y="77" text-anchor="middle">长会话状态机 / Flow / Follow-Up</text>
+
+      <rect class="rt-box" x="382" y="44" width="350" height="56" rx="9"/>
+      <text class="box-text" x="557" y="77" text-anchor="middle">Hot Snapshot / Runtime Checkpoint</text>
+
+      <rect class="rt-box" x="748" y="44" width="350" height="56" rx="9"/>
+      <text class="box-text" x="923" y="77" text-anchor="middle">Rehydrate / Replay / Turn Repair</text>
+
+      <rect class="rt-box" x="1114" y="44" width="380" height="56" rx="9"/>
+      <text class="box-text" x="1304" y="77" text-anchor="middle">幂等 / 题级锁 / 限流 / Owner 校验</text>
+    </g>
+
+    <!-- infra strip -->
+    <rect class="infra-strip" x="32" y="548" width="1510" height="46"/>
+    <text class="title" x="787" y="578" text-anchor="middle">MyBatis Plus + Spring Data MongoDB + Redis + Maven / Docker Compose / GitHub Actions</text>
+  </g>
+
+  <!-- External AI -->
+  <g transform="translate(1668 610)">
+    <rect class="ai-outline" x="0" y="0" width="412" height="308" rx="22"/>
+    <rect class="ai-head" x="0" y="0" width="412" height="48" rx="22"/>
+    <rect fill="#d9cde4" x="0" y="24" width="412" height="24"/>
+    <text class="section" x="206" y="31" text-anchor="middle">外部 AI / 语音服务</text>
+
+    <rect class="cap-box" x="30" y="70" width="352" height="52" rx="10" stroke="#9c72c4"/>
+    <text class="box-title" x="206" y="102" text-anchor="middle">OpenAI / DeepSeek（LLM）</text>
+
+    <rect class="cap-box" x="30" y="142" width="352" height="52" rx="10" stroke="#9c72c4"/>
+    <text class="box-title" x="206" y="174" text-anchor="middle">讯飞语音（ASR / TTS）</text>
+
+    <rect class="cap-box" x="30" y="214" width="352" height="52" rx="10" stroke="#9c72c4"/>
+    <text class="box-title" x="206" y="246" text-anchor="middle">星辰工作流 / Agent Flow</text>
+  </g>
+
+  <!-- backend to external AI dashed -->
+  <path class="dashed" d="M 1580 760 L 1668 760"/>
+  <text class="label" x="1624" y="742" text-anchor="middle">HTTP API / SDK / Workflow</text>
+
+  <!-- Bottom labels and arrows -->
+  <text class="label" x="240" y="1018" text-anchor="middle">结构化业务数据</text>
+  <path class="line" d="M 240 950 L 230 1130"/>
+
+  <text class="label" x="710" y="1000" text-anchor="middle">缓存 / 运行态 / 幂等 / 锁</text>
+  <path class="line" d="M 790 950 L 790 1130"/>
+
+  <text class="label" x="1120" y="1018" text-anchor="middle">会话文档 / 消息 / 面试会话</text>
+  <path class="line" d="M 1120 950 L 1120 1130"/>
+
+  <text class="label" x="1440" y="1000" text-anchor="middle">上传临时文件 / 音频 / 日志</text>
+  <path class="line" d="M 1380 950 L 1450 1130"/>
+
+  <!-- MySQL cylinder -->
+  <g transform="translate(110 1130)">
+    <ellipse class="cyl-red-top" cx="120" cy="24" rx="120" ry="24"/>
+    <rect class="cyl-red-body" x="0" y="24" width="240" height="86"/>
+    <ellipse class="cyl-red-body" cx="120" cy="110" rx="120" ry="24"/>
+    <text class="section" x="120" y="78" text-anchor="middle">MySQL</text>
+    <text class="title" x="120" y="108" text-anchor="middle">用户 / 配置 / 报告</text>
+  </g>
+
+  <!-- Redis cylinder -->
+  <g transform="translate(670 1130)">
+    <ellipse class="cyl-green-top" cx="120" cy="24" rx="120" ry="24"/>
+    <rect class="cyl-green-body" x="0" y="24" width="240" height="86"/>
+    <ellipse class="cyl-green-body" cx="120" cy="110" rx="120" ry="24"/>
+    <text class="section" x="120" y="78" text-anchor="middle">Redis</text>
+    <text class="title" x="120" y="108" text-anchor="middle">缓存 + 运行态</text>
+  </g>
+
+  <!-- MongoDB cylinder -->
+  <g transform="translate(1000 1130)">
+    <ellipse class="cyl-blue-top" cx="120" cy="24" rx="120" ry="24"/>
+    <rect class="cyl-blue-body" x="0" y="24" width="240" height="86"/>
+    <ellipse class="cyl-blue-body" cx="120" cy="110" rx="120" ry="24"/>
+    <text class="section" x="120" y="78" text-anchor="middle">MongoDB</text>
+    <text class="title" x="120" y="108" text-anchor="middle">会话 / 消息 / 文档</text>
+  </g>
+
+  <!-- Local storage cylinder -->
+  <g transform="translate(1330 1130)">
+    <ellipse class="cyl-purple-top" cx="120" cy="24" rx="120" ry="24"/>
+    <rect class="cyl-purple-body" x="0" y="24" width="240" height="86"/>
+    <ellipse class="cyl-purple-body" cx="120" cy="110" rx="120" ry="24"/>
+    <text class="section" x="120" y="78" text-anchor="middle">本地文件目录</text>
+    <text class="title" x="120" y="108" text-anchor="middle">temp / audio / logs</text>
+  </g>
+</svg>
