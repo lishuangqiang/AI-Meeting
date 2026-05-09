@@ -15,7 +15,7 @@
 演示视频：[Bilibili 项目展示]( https://www.bilibili.com/video/BV1ccR9B9EEm/?share_source=copy_web&vd_source=2147a1677cc5a940112d07c6f03c4bc9)
 
 ## 系统架构：
-![系统架构图](docs\assets\项目架构图.svg)
+![系统架构图](docs/assets/项目架构图.svg)
 
 ## 简历写法
 
@@ -35,9 +35,9 @@
 
 # 文档展示
 
-![文档首页截图](docs\assets\文档首页截图.png)
-![文档部分截图](docs\assets\文档截图.png)
-![文档部分截图](docs\assets\文档截图2.png)
+![文档首页截图](docs/assets/文档首页截图.png)
+![文档部分截图](docs/assets/文档截图.png)
+![文档部分截图](docs/assets/文档截图2.png)
 
 
 ## 架构简图
