@@ -82,9 +82,9 @@ collection:
 
 xunfei:
   lat-key:
-    app-id: ${XUNFEI_APP_ID:96f3a359}
-    api-key: ${XUNFEI_API_KEY:e8565c438f59b301616e0498a86ad95d}
-    api-secret: ${XUNFEI_API_SECRET:OGZkZGQ5ZDY0Yzc4MTllZWI3ZmU2MDU4}
+    app-id: ${XUNFEI_APP_ID:b00b747e}
+    api-key: ${XUNFEI_API_KEY:86f9f60da8d9f65a979dec8ed4978997}
+    api-secret: ${XUNFEI_API_SECRET:ZjMyNTgyY2RiYmEzMWQ0NGQzYTVmMTNj}
     rta-api-key: ${XUNFEI_RTA_API_KEY:}
 
 xunzhi-agent:
