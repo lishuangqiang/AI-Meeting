@@ -19,6 +19,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -53,6 +54,9 @@ public class InterviewQuestionExtractionService {
         reqDTO.setAgentId(agentProperties.getId());
         response.setIsSuccess(0);
 
+        // 哈希计算是纯本地操作，在获取分布式锁之前完成，减少锁占用时间。
+        String resumeContentHash = computeResumeHash(reqDTO.getResumePdf(), reqDTO.getSessionId());
+
         RLock heavyLock = null;
         long startTime = System.currentTimeMillis();
         try {
@@ -74,7 +78,7 @@ public class InterviewQuestionExtractionService {
                     agentProperties,
                     fileUrl,
                     InterviewAiGuardStage.INTERVIEW_EXTRACTION,
-                    interviewAiInvoker.buildSingleFlightKey(InterviewAiGuardStage.INTERVIEW_EXTRACTION, reqDTO.getSessionId(), fileUrl)
+                    interviewAiInvoker.buildSingleFlightKey(InterviewAiGuardStage.INTERVIEW_EXTRACTION, reqDTO.getSessionId(), resumeContentHash)
             );
 
             long responseTime = System.currentTimeMillis() - startTime;
@@ -304,6 +308,31 @@ public class InterviewQuestionExtractionService {
 
     private List<String> normalizeStringList(Object value) {
         return interviewResponseParser.asStringList(value);
+    }
+
+    /**
+     * 计算简历文件内容的 SHA-256 哈希，用于 single-flight 去重。
+     * 相同文件内容产生相同哈希，避免因上传 URL 每次变化导致去重失效。
+     *
+     * @param resumePdf 简历文件
+     * @param sessionId 会话标识，仅用于日志
+     * @return 文件内容的 SHA-256 十六进制字符串，文件为空时返回 null
+     */
+    private String computeResumeHash(MultipartFile resumePdf, String sessionId) {
+        if (resumePdf == null || resumePdf.isEmpty()) {
+            log.debug("Resume PDF is null or empty, cannot compute content hash, sessionId={}", sessionId);
+            return null;
+        }
+        try {
+            byte[] fileBytes = resumePdf.getBytes();
+            String hash = DigestUtil.sha256Hex(fileBytes);
+            log.debug("Computed resume content hash, sessionId={}, hash={}", sessionId, hash);
+            return hash;
+        } catch (Exception e) {
+            log.warn("Failed to read resume PDF bytes for content hashing, sessionId={}, error={}",
+                    sessionId, e.getMessage());
+            return null;
+        }
     }
 
     private String digestForLog(String value) {
