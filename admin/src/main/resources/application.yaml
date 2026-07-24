@@ -63,11 +63,15 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        # threadpools：运行时查询/动态调整线程池；/actuator 默认无登录鉴权，生产请限制访问面
+        include: health,info,threadpools
   endpoint:
     health:
       probes:
         enabled: true
+    # 对该端点执行 WriteOperation（动态调参）
+    threadpools:
+      access: unrestricted
   health:
     defaults:
       enabled: true

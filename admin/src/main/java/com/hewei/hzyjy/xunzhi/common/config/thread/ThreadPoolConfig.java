@@ -21,22 +21,40 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Shared thread pools split by workload type:
- * - general async tasks
- * - interview AI I/O tasks
- * - CPU-intensive local compute tasks
- * - query/read-heavy async tasks
+ * 按工作负载拆分的共享线程池：
+ * - general：通用异步任务
+ * - interview AI I/O：面试相关 AI 调用
+ * - CPU：偏本地计算
+ * - query：查询/聚合类异步任务
+ * - scheduled：定时调度
+ * <p>
+ * 创建后会将底层 {@link ThreadPoolExecutor} 登记到 {@link ThreadPoolRegistry}，
+ * 以便运行时观测与动态调整（不影响现有 Bean 注入方式）。
  */
 @Configuration
 @RequiredArgsConstructor
 public class ThreadPoolConfig {
 
+    public static final String POOL_GENERAL = "general";
+    public static final String POOL_INTERVIEW_AI_IO = "interview-ai-io";
+    public static final String POOL_CPU_COMPUTE = "cpu-compute";
+    public static final String POOL_QUERY = "query";
+    public static final String POOL_SCHEDULED = "scheduled";
+
     private final ApplicationThreadPoolProperties properties;
     private final MeterRegistry meterRegistry;
+    private final ThreadPoolRegistry threadPoolRegistry;
 
     @Bean(name = "threadPoolTaskExecutor")
     public ThreadPoolTaskExecutor threadPoolTaskExecutor() {
-        return buildTaskExecutor(properties.getGeneral());
+        ApplicationThreadPoolProperties.Pool pool = properties.getGeneral();
+        ThreadPoolTaskExecutor executor = buildTaskExecutor(pool);
+        threadPoolRegistry.register(
+                POOL_GENERAL,
+                executor.getThreadPoolExecutor(),
+                positive(pool == null ? null : pool.getQueueCapacity(), 1000)
+        );
+        return executor;
     }
 
     @Bean(name = "asyncTaskExecutor")
@@ -46,24 +64,24 @@ public class ThreadPoolConfig {
 
     @Bean(name = "interviewAiIoExecutor", destroyMethod = "shutdown")
     public ExecutorService interviewAiIoExecutor() {
-        return buildExecutorService("interview-ai-io", properties.getAiIo());
+        return buildExecutorService(POOL_INTERVIEW_AI_IO, properties.getAiIo());
     }
 
     @Bean(name = "cpuComputeExecutor", destroyMethod = "shutdown")
     public ExecutorService cpuComputeExecutor() {
-        return buildExecutorService("cpu-compute", properties.getCpu());
+        return buildExecutorService(POOL_CPU_COMPUTE, properties.getCpu());
     }
 
     @Bean(name = "queryExecutor", destroyMethod = "shutdown")
     public ExecutorService queryExecutor() {
-        return buildExecutorService("query", properties.getQuery());
+        return buildExecutorService(POOL_QUERY, properties.getQuery());
     }
 
     @Bean(name = "scheduledExecutorService")
     protected ScheduledExecutorService scheduledExecutorService() {
         int poolSize = positive(properties.getScheduledPoolSize(), 8);
         String prefix = normalizePrefix(properties.getScheduledThreadNamePrefix(), "xunzhi-schedule-");
-        return new ScheduledThreadPoolExecutor(
+        ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(
                 poolSize,
                 new BasicThreadFactory.Builder().namingPattern(prefix + "%d").daemon(true).build()
         ) {
@@ -73,6 +91,9 @@ public class ThreadPoolConfig {
                 Threads.printException(runnable, throwable);
             }
         };
+        // ScheduledThreadPoolExecutor 使用 DelayedWorkQueue，无固定有界容量可配置。
+        threadPoolRegistry.register(POOL_SCHEDULED, executor, null);
+        return executor;
     }
 
     private ThreadPoolTaskExecutor buildTaskExecutor(ApplicationThreadPoolProperties.Pool pool) {
@@ -114,6 +135,8 @@ public class ThreadPoolConfig {
                 Threads.printException(runnable, throwable);
             }
         };
+        // 必须在 Micrometer 包装前登记原始实例，否则运行时无法 setCore/setMax。
+        threadPoolRegistry.register(poolName, executor, queueCapacity);
         return ExecutorServiceMetrics.monitor(
                 meterRegistry,
                 executor,
@@ -135,7 +158,7 @@ public class ThreadPoolConfig {
     }
 
     private java.util.concurrent.RejectedExecutionHandler resolveRejectPolicy(String poolName) {
-        if ("interview-ai-io".equals(poolName)) {
+        if (POOL_INTERVIEW_AI_IO.equals(poolName)) {
             return abortPolicy();
         }
         return callerRunsPolicy();
