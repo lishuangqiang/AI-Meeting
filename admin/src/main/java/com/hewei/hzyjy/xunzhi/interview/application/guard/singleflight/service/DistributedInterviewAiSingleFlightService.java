@@ -145,11 +145,15 @@ public class DistributedInterviewAiSingleFlightService {
                 }
                 throw new IllegalStateException("failed to finish distributed flight success state");
             }
-            flightNotificationService.publish(requestKey, "owner_succeeded", FlightStatus.SUCCEEDED, ownerToken, null, false);
+            // 通知流 TTL 复用结果 TTL，保证还在阻塞等待的 follower 不会因提前回收而错过唤醒。
+            flightNotificationService.publish(requestKey, "owner_succeeded", FlightStatus.SUCCEEDED,
+                    ownerToken, null, false, resultTtlMillis);
             flightReplayLocalCache.put(stage, requestKey, result, policy);
             return result;
         } catch (Throwable ex) {
             FlightFailure failure = classifyFailure(ex);
+            // 失败结果 TTL 与 finishFailure 保持一致，避免通知流比失败标记更早被回收。
+            long failedTtlMillis = positive(policy.getFailedResultTtlMillis(), 60000L);
             flightCoordinatorRepository.finishFailure(
                     requestKey,
                     nodeId(),
@@ -157,9 +161,10 @@ public class DistributedInterviewAiSingleFlightService {
                     failure.errorType,
                     failure.errorCode,
                     failure.retryable,
-                    positive(policy.getFailedResultTtlMillis(), 60000L)
+                    failedTtlMillis
             );
-            flightNotificationService.publish(requestKey, "owner_failed", FlightStatus.FAILED, ownerToken, failure.errorType, failure.retryable);
+            flightNotificationService.publish(requestKey, "owner_failed", FlightStatus.FAILED,
+                    ownerToken, failure.errorType, failure.retryable, failedTtlMillis);
             throw rethrow(ex);
         } finally {
             flightHeartbeatManager.stop(heartbeatTaskKey);
