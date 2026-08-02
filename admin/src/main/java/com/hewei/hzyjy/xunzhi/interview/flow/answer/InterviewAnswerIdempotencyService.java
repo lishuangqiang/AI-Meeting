@@ -2,40 +2,55 @@ package com.hewei.hzyjy.xunzhi.interview.flow.answer;
 
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.fastjson2.JSON;
-import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewAnswerRespDTO;
+import com.alibaba.fastjson2.JSONObject;
 import com.hewei.hzyjy.xunzhi.interview.config.InterviewAnswerGuardConfiguration;
+import com.hewei.hzyjy.xunzhi.interview.service.cache.InterviewCacheKeys;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 /**
  * Idempotency state manager for interview answer requests.
+ * <p>
+ * 已提交结果由原子提交 Lua 脚本写入 committedRecords Hash（interview:answer:committed:session:{sid}），
+ * 本服务负责：① committedRecords 预检回放（指纹一致才回放，不符明确报错）；
+ * ② in-flight 围栏（processing key，SET NX 原子抢占）。
  */
 @Service
 @RequiredArgsConstructor
 public class InterviewAnswerIdempotencyService {
 
-    private static final String PROCESSING_KEY_PREFIX = "interview:answer:idempotency:processing:";
-    private static final String REPLAY_KEY_PREFIX = "interview:answer:idempotency:replay:";
+    private static final String PROCESSING_KEY_PREFIX = "interview:answer:idempotency:processing:{";
 
     private final StringRedisTemplate stringRedisTemplate;
     private final InterviewAnswerGuardConfiguration configuration;
 
-    public TryStartResult tryStart(String sessionId, String requestId) {
+    public TryStartResult tryStart(String sessionId, String requestId, String questionNumber, String answerDigest) {
         if (StrUtil.isBlank(sessionId) || StrUtil.isBlank(requestId)) {
             return TryStartResult.newRequest();
         }
-        String replayPayload = stringRedisTemplate.opsForValue().get(replayKey(sessionId, requestId));
-        if (StrUtil.isNotBlank(replayPayload)) {
-            InterviewAnswerRespDTO replayResponse = safeParseReplay(replayPayload);
-            if (replayResponse != null) {
-                return TryStartResult.succeeded(replayResponse);
+        // 1) committedRecords 预检：已提交且指纹一致 → 回放；指纹不符 → 明确报错（fail closed，不覆盖）。
+        Object record = stringRedisTemplate.opsForHash().get(
+                InterviewCacheKeys.committedAnswer(sessionId), requestId);
+        if (record != null) {
+            try {
+                JSONObject committed = JSON.parseObject(record.toString());
+                if (committed != null
+                        && Objects.equals(committed.getString("questionNumber"), questionNumber)
+                        && Objects.equals(committed.getString("answerDigest"), answerDigest)) {
+                    return TryStartResult.succeeded(record.toString());
+                }
+                return TryStartResult.fingerprintMismatch();
+            } catch (Exception ex) {
+                // 记录损坏：按指纹不符处理（fail closed）。
+                return TryStartResult.fingerprintMismatch();
             }
         }
-
+        // 2) in-flight 围栏：同 requestId 同时只允许一个请求进入管道。
         Boolean started = stringRedisTemplate.opsForValue().setIfAbsent(
                 processingKey(sessionId, requestId),
                 "1",
@@ -48,20 +63,6 @@ public class InterviewAnswerIdempotencyService {
         return TryStartResult.processing();
     }
 
-    public void markSucceeded(String sessionId, String requestId, InterviewAnswerRespDTO response) {
-        if (StrUtil.isBlank(sessionId) || StrUtil.isBlank(requestId) || response == null) {
-            return;
-        }
-        String replayPayload = JSON.toJSONString(response);
-        stringRedisTemplate.opsForValue().set(
-                replayKey(sessionId, requestId),
-                replayPayload,
-                resolveReplayExpireHours(),
-                TimeUnit.HOURS
-        );
-        stringRedisTemplate.delete(processingKey(sessionId, requestId));
-    }
-
     public void clearProcessing(String sessionId, String requestId) {
         if (StrUtil.isBlank(sessionId) || StrUtil.isBlank(requestId)) {
             return;
@@ -69,20 +70,8 @@ public class InterviewAnswerIdempotencyService {
         stringRedisTemplate.delete(processingKey(sessionId, requestId));
     }
 
-    private InterviewAnswerRespDTO safeParseReplay(String payload) {
-        try {
-            return JSON.parseObject(payload, InterviewAnswerRespDTO.class);
-        } catch (Exception ex) {
-            return null;
-        }
-    }
-
     private String processingKey(String sessionId, String requestId) {
-        return PROCESSING_KEY_PREFIX + sessionId + ":" + requestId;
-    }
-
-    private String replayKey(String sessionId, String requestId) {
-        return REPLAY_KEY_PREFIX + sessionId + ":" + requestId;
+        return PROCESSING_KEY_PREFIX + sessionId + "}:" + requestId;
     }
 
     private long resolveProcessingExpireSeconds() {
@@ -93,19 +82,14 @@ public class InterviewAnswerIdempotencyService {
         return Math.max(base, guard);
     }
 
-    private long resolveReplayExpireHours() {
-        Long configured = configuration.getReplayExpireHours();
-        return configured == null || configured <= 0 ? 24L : configured;
-    }
-
     @Getter
     public static final class TryStartResult {
         private final TryStartStatus status;
-        private final InterviewAnswerRespDTO replayResponse;
+        private final String replayRecordJson;
 
-        private TryStartResult(TryStartStatus status, InterviewAnswerRespDTO replayResponse) {
+        private TryStartResult(TryStartStatus status, String replayRecordJson) {
             this.status = status;
-            this.replayResponse = replayResponse;
+            this.replayRecordJson = replayRecordJson;
         }
 
         public static TryStartResult newRequest() {
@@ -116,14 +100,19 @@ public class InterviewAnswerIdempotencyService {
             return new TryStartResult(TryStartStatus.PROCESSING, null);
         }
 
-        public static TryStartResult succeeded(InterviewAnswerRespDTO replayResponse) {
-            return new TryStartResult(TryStartStatus.SUCCEEDED, replayResponse);
+        public static TryStartResult succeeded(String replayRecordJson) {
+            return new TryStartResult(TryStartStatus.SUCCEEDED, replayRecordJson);
+        }
+
+        public static TryStartResult fingerprintMismatch() {
+            return new TryStartResult(TryStartStatus.FINGERPRINT_MISMATCH, null);
         }
     }
 
     public enum TryStartStatus {
         NEW,
         PROCESSING,
-        SUCCEEDED
+        SUCCEEDED,
+        FINGERPRINT_MISMATCH
     }
 }
