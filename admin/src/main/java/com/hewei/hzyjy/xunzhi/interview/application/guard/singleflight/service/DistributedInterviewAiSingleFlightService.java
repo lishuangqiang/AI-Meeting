@@ -87,7 +87,12 @@ public class DistributedInterviewAiSingleFlightService {
                 return localSingleFlightService.execute(safeRequestKey, supplier);
             }
             switch (acquireResult.getAction()) {
-                case OWNER_NEW, OWNER_TAKEOVER -> {
+                case OWNER_TAKEOVER -> {
+                    // 换代清掉旧门铃，避免上一代 owner_failed 等事件跨代残留，让新一轮 follower 忙等。
+                    flightNotificationService.clearStream(safeRequestKey);
+                    return ownerExecute(safeStage, safeRequestKey, acquireResult.getOwnerToken(), supplier, policy);
+                }
+                case OWNER_NEW -> {
                     return ownerExecute(safeStage, safeRequestKey, acquireResult.getOwnerToken(), supplier, policy);
                 }
                 case REPLAY_SUCCESS -> {
@@ -177,6 +182,8 @@ public class DistributedInterviewAiSingleFlightService {
         long streamBlockTimeoutMillis = positive(configuration.getStreamBlockTimeoutMillis(), 3000L);
         long pollIntervalMillis = positive(configuration.getPollFallbackIntervalMillis(), 2000L);
         long nextPollAt = System.currentTimeMillis();
+        // 首次从 "0" 读，迟到 follower 仍能立刻看到已有终态；之后只跟游标收更新消息，避免旧铃反复响。
+        String streamReadId = "0";
         while (System.currentTimeMillis() < deadlineMillis) {
             String replay = tryReadSuccessReplay(stage, requestKey, policy);
             if (replay != null) {
@@ -191,7 +198,11 @@ public class DistributedInterviewAiSingleFlightService {
             if (remainingMillis <= 0) {
                 return null;
             }
-            flightNotificationService.waitForTerminalEvent(requestKey, Math.min(streamBlockTimeoutMillis, remainingMillis));
+            String nextReadId = flightNotificationService.waitForTerminalEvent(
+                    requestKey, streamReadId, Math.min(streamBlockTimeoutMillis, remainingMillis));
+            if (StrUtil.isNotBlank(nextReadId)) {
+                streamReadId = nextReadId;
+            }
             if (System.currentTimeMillis() >= nextPollAt) {
                 String polledReplay = tryReadSuccessReplay(stage, requestKey, policy);
                 if (polledReplay != null) {

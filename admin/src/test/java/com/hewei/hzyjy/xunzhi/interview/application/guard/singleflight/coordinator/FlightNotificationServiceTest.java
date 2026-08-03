@@ -9,6 +9,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.ReadOffset;
+import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.StreamOperations;
@@ -74,23 +75,43 @@ class FlightNotificationServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void shouldReadFromStreamHeadSoLateFollowerCanWakeImmediately() {
+    void shouldReadFromAfterIdAndReturnRecordId() {
         when(stringRedisTemplate.opsForStream()).thenReturn(streamOperations);
         FlightNotificationService service = new FlightNotificationService(stringRedisTemplate);
 
         MapRecord<String, Object, Object> record = mock(MapRecord.class);
-        when(record.getValue()).thenReturn(java.util.Map.of("status", "SUCCEEDED"));
+        when(record.getId()).thenReturn(RecordId.of("1710000000000-0"));
         when(streamOperations.read(any(StreamReadOptions.class), any(StreamOffset.class)))
                 .thenReturn(List.of(record));
 
-        FlightStatus status = service.waitForTerminalEvent(REQUEST_KEY, 50L);
+        // 首次 afterId="0"：迟到 follower 仍能立刻看到已存在的终态。
+        String recordId = service.waitForTerminalEvent(REQUEST_KEY, "0", 50L);
 
-        // 迟到 follower 从流开头读，应能立刻看到已存在的终态事件被唤醒。
         ArgumentCaptor<StreamOffset<String>> offsetCaptor = ArgumentCaptor.forClass(StreamOffset.class);
         verify(streamOperations).read(any(StreamReadOptions.class), offsetCaptor.capture());
         ReadOffset readOffset = offsetCaptor.getValue().getOffset();
-        assertEquals("0", readOffset.getOffset(), "通知流应从开头读取，而非 latest");
-        assertEquals(FlightStatus.SUCCEEDED, status);
+        assertEquals("0", readOffset.getOffset(), "首次应从流开头读取，而非 latest");
+        assertEquals("1710000000000-0", recordId);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void shouldAdvanceCursorWithPreviousRecordId() {
+        when(stringRedisTemplate.opsForStream()).thenReturn(streamOperations);
+        FlightNotificationService service = new FlightNotificationService(stringRedisTemplate);
+
+        MapRecord<String, Object, Object> record = mock(MapRecord.class);
+        when(record.getId()).thenReturn(RecordId.of("1710000000001-0"));
+        when(streamOperations.read(any(StreamReadOptions.class), any(StreamOffset.class)))
+                .thenReturn(List.of(record));
+
+        // 后续读取必须带上游游标，只收更新消息，避免旧事件反复唤醒。
+        String recordId = service.waitForTerminalEvent(REQUEST_KEY, "1710000000000-0", 50L);
+
+        ArgumentCaptor<StreamOffset<String>> offsetCaptor = ArgumentCaptor.forClass(StreamOffset.class);
+        verify(streamOperations).read(any(StreamReadOptions.class), offsetCaptor.capture());
+        assertEquals("1710000000000-0", offsetCaptor.getValue().getOffset().getOffset());
+        assertEquals("1710000000001-0", recordId);
     }
 
     @Test
@@ -101,8 +122,17 @@ class FlightNotificationServiceTest {
         when(streamOperations.read(any(StreamReadOptions.class), any(StreamOffset.class)))
                 .thenReturn(List.of());
 
-        FlightStatus status = service.waitForTerminalEvent(REQUEST_KEY, 50L);
+        String recordId = service.waitForTerminalEvent(REQUEST_KEY, "0", 50L);
 
-        assertNull(status);
+        assertNull(recordId);
+    }
+
+    @Test
+    void shouldDeleteStreamKeyOnClear() {
+        FlightNotificationService service = new FlightNotificationService(stringRedisTemplate);
+
+        service.clearStream(REQUEST_KEY);
+
+        verify(stringRedisTemplate).delete(STREAM_KEY);
     }
 }

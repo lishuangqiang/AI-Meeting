@@ -6,6 +6,7 @@ import com.hewei.hzyjy.xunzhi.interview.application.guard.singleflight.model.Fli
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.ReadOffset;
+import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
@@ -66,18 +67,36 @@ public class FlightNotificationService {
         stringRedisTemplate.expire(key, Duration.ofMillis(safeTtlMillis));
     }
 
-    public FlightStatus waitForTerminalEvent(String requestKey, long blockTimeoutMillis) {
+    /**
+     * 按 Redis Stream 游标阻塞读取下一条通知。
+     * <p>
+     * 首次调用应传 {@code afterId="0"}，迟到 follower 仍能立刻看到已存在的终态；
+     * 读到记录后应把返回的 record id 作为下次 {@code afterId}，只收更新的消息，
+     * 避免同一条旧事件反复唤醒导致忙等。
+     *
+     * @param requestKey         single-flight 请求指纹
+     * @param afterId            排他下界游标，首次传 {@code "0"}
+     * @param blockTimeoutMillis XREAD BLOCK 超时毫秒
+     * @return 读到的 stream record id；超时或无消息时返回 null
+     */
+    public String waitForTerminalEvent(String requestKey, String afterId, long blockTimeoutMillis) {
+        String offset = StrUtil.blankToDefault(afterId, "0");
         List<MapRecord<String, Object, Object>> records = stringRedisTemplate.opsForStream().read(
                 StreamReadOptions.empty().count(1).block(Duration.ofMillis(Math.max(1L, blockTimeoutMillis))),
-                // 从流开头读取，让在 owner 发布终态之后才进入阻塞的 follower 也能立刻看到已存在的事件被唤醒；
-                // 通知流仅作唤醒信号，真实状态仍以 meta/result 的 Redis Hash 为准。
-                StreamOffset.create(streamKey(requestKey), ReadOffset.from("0"))
+                StreamOffset.create(streamKey(requestKey), ReadOffset.from(offset))
         );
         if (records == null || records.isEmpty()) {
             return null;
         }
-        Object status = records.get(0).getValue().get("status");
-        return FlightStatus.from(status == null ? null : status.toString());
+        RecordId recordId = records.get(0).getId();
+        return recordId == null ? null : recordId.getValue();
+    }
+
+    /**
+     * OWNER_TAKEOVER 换代时删除旧通知流，避免跨代残留事件继续吵醒 follower。
+     */
+    public void clearStream(String requestKey) {
+        stringRedisTemplate.delete(streamKey(requestKey));
     }
 
     private String streamKey(String requestKey) {
