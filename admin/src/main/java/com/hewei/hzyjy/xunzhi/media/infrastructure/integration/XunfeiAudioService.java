@@ -394,6 +394,18 @@ public class XunfeiAudioService {
             return;
         }
 
+        // Some AST responses omit pgs but still send cumulative live snapshots.
+        // Replace the preceding uncommitted range instead of concatenating it.
+        if (!finalized) {
+            sentencePool.entrySet().removeIf(entry -> {
+                SegmentState state = entry.getValue();
+                return state != null
+                        && !state.finalized
+                        && state.ed != null
+                        && state.ed < bg;
+            });
+        }
+
         SegmentState sameRange = findExactRangeState(sentencePool, bg, ed);
         if (sameRange != null && isPunctuationOnly(text) && StrUtil.isNotBlank(sameRange.text)) {
             sameRange.text = appendTrailingPunctuation(sameRange.text, text);

@@ -5,6 +5,8 @@ import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewQuestionReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewAnswerRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewQuestionRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.application.InterviewWorkflowService;
+import com.hewei.hzyjy.xunzhi.interview.application.runtime.InterviewSessionRuntimeRehydrateService;
+import com.hewei.hzyjy.xunzhi.interview.application.runtime.InterviewSessionRuntimeSnapshotService;
 import com.hewei.hzyjy.xunzhi.interview.dao.entity.InterviewSession;
 import com.hewei.hzyjy.xunzhi.interview.flow.report.InterviewResumePreviewService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
@@ -49,13 +51,17 @@ class InterviewSessionFacadePressureTest {
         InterviewRecordService recordService = mock(InterviewRecordService.class);
         InterviewResumePreviewService previewService = mock(InterviewResumePreviewService.class);
         InterviewSessionService sessionService = mock(InterviewSessionService.class);
+        InterviewSessionRuntimeSnapshotService runtimeSnapshotService = mock(InterviewSessionRuntimeSnapshotService.class);
+        InterviewSessionRuntimeRehydrateService runtimeRehydrateService = mock(InterviewSessionRuntimeRehydrateService.class);
         InterviewSessionFacade facade = new InterviewSessionFacade(
                 workflowService,
                 cacheService,
                 questionService,
                 recordService,
                 previewService,
-                sessionService
+                sessionService,
+                runtimeSnapshotService,
+                runtimeRehydrateService
         );
 
         InterviewSession session = new InterviewSession();
@@ -132,13 +138,17 @@ class InterviewSessionFacadePressureTest {
         InterviewRecordService recordService = mock(InterviewRecordService.class);
         InterviewResumePreviewService previewService = mock(InterviewResumePreviewService.class);
         InterviewSessionService sessionService = mock(InterviewSessionService.class);
+        InterviewSessionRuntimeSnapshotService runtimeSnapshotService = mock(InterviewSessionRuntimeSnapshotService.class);
+        InterviewSessionRuntimeRehydrateService runtimeRehydrateService = mock(InterviewSessionRuntimeRehydrateService.class);
         InterviewSessionFacade facade = new InterviewSessionFacade(
                 workflowService,
                 cacheService,
                 questionService,
                 recordService,
                 previewService,
-                sessionService
+                sessionService,
+                runtimeSnapshotService,
+                runtimeRehydrateService
         );
 
         doNothing().when(sessionService).markResumeUploading(anyString(), anyLong());
