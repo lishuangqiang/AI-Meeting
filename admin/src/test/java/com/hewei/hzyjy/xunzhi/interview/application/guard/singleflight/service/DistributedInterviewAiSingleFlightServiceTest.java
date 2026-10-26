@@ -19,9 +19,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -100,6 +101,72 @@ class DistributedInterviewAiSingleFlightServiceTest {
         assertEquals(1, callCount.get());
         verify(repository).storeResult(anyString(), anyString(), anyLong(), any(), anyLong());
         verify(repository).finishSuccess(anyString(), anyString(), anyLong(), anyLong());
+        // publish 已扩展为 7 参（含 stream TTL），需与生产调用签名保持一致。
+        verify(notificationService).publish(
+                anyString(),
+                eq("owner_succeeded"),
+                eq(FlightStatus.SUCCEEDED),
+                eq(1L),
+                isNull(),
+                eq(false),
+                anyLong()
+        );
+        verify(notificationService, never()).clearStream(anyString());
+    }
+
+    @Test
+    void shouldClearStreamOnOwnerTakeover() {
+        InterviewAiSingleFlightConfiguration configuration = newConfig();
+        InterviewAiSingleFlightService localService = mock(InterviewAiSingleFlightService.class);
+        FlightCoordinatorRepository repository = mock(FlightCoordinatorRepository.class);
+        FlightNotificationService notificationService = mock(FlightNotificationService.class);
+        FlightHeartbeatManager heartbeatManager = mock(FlightHeartbeatManager.class);
+        FlightResultSerializer serializer = mock(FlightResultSerializer.class);
+        FlightReplayLocalCache replayLocalCache = mock(FlightReplayLocalCache.class);
+
+        when(repository.acquireOrJoin(anyString(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(FlightAcquireResult.builder().action(FlightAction.OWNER_TAKEOVER).ownerToken(2L).build());
+        when(repository.markRunning(anyString(), anyString(), anyLong(), anyLong())).thenReturn(true);
+        when(heartbeatManager.start(any(), any())).thenReturn("hb-2");
+        FlightStoredResult storedResult = FlightStoredResult.builder()
+                .payload("payload")
+                .codec("none")
+                .compressed(false)
+                .rawSize(5)
+                .storedSize(5)
+                .checksum("c")
+                .contentType("text/plain")
+                .finishedAt(System.currentTimeMillis())
+                .ownerToken(2L)
+                .build();
+        when(serializer.serialize(anyString(), anyLong(), any())).thenReturn(storedResult);
+        when(repository.storeResult(anyString(), anyString(), anyLong(), any(), anyLong())).thenReturn(true);
+        when(repository.finishSuccess(anyString(), anyString(), anyLong(), anyLong())).thenReturn(true);
+
+        DistributedInterviewAiSingleFlightService service = new DistributedInterviewAiSingleFlightService(
+                configuration,
+                localService,
+                repository,
+                notificationService,
+                heartbeatManager,
+                serializer,
+                replayLocalCache
+        );
+
+        String result = service.execute(InterviewAiGuardStage.INTERVIEW_EVALUATION,
+                "interview-evaluation|s1|1|a1", () -> "takeover-value");
+
+        assertEquals("takeover-value", result);
+        verify(notificationService).clearStream("interview-evaluation|s1|1|a1");
+        verify(notificationService).publish(
+                anyString(),
+                eq("owner_succeeded"),
+                eq(FlightStatus.SUCCEEDED),
+                eq(2L),
+                isNull(),
+                eq(false),
+                anyLong()
+        );
     }
 
     @Test
