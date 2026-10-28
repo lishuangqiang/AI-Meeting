@@ -3,6 +3,8 @@ package com.hewei.hzyjy.xunzhi.interview.flow.report;
 import com.hewei.hzyjy.xunzhi.common.convention.exception.ClientException;
 import com.hewei.hzyjy.xunzhi.interview.application.InterviewSessionOwnershipService;
 import com.hewei.hzyjy.xunzhi.interview.application.finalize.InterviewFinalizeLockService;
+import com.hewei.hzyjy.xunzhi.interview.application.runtime.InterviewSessionRuntimeRehydrateService;
+import com.hewei.hzyjy.xunzhi.interview.application.runtime.InterviewSessionRuntimeSnapshotService;
 import com.hewei.hzyjy.xunzhi.interview.dao.entity.InterviewQuestion;
 import com.hewei.hzyjy.xunzhi.interview.dao.entity.InterviewRecordDO;
 import com.hewei.hzyjy.xunzhi.interview.dao.entity.InterviewSession;
@@ -44,6 +46,8 @@ class InterviewRecordFinalizeConcurrencyTest {
         InterviewSessionService sessionService = mock(InterviewSessionService.class);
         InterviewQuestionService questionService = mock(InterviewQuestionService.class);
         InterviewFinalizeLockService finalizeLockService = mock(InterviewFinalizeLockService.class);
+        InterviewSessionRuntimeSnapshotService runtimeSnapshotService = mock(InterviewSessionRuntimeSnapshotService.class);
+        InterviewSessionRuntimeRehydrateService runtimeRehydrateService = mock(InterviewSessionRuntimeRehydrateService.class);
         InterviewRecordMapper mapper = mock(InterviewRecordMapper.class);
 
         InterviewRecordServiceImpl service = new InterviewRecordServiceImpl(
@@ -51,7 +55,9 @@ class InterviewRecordFinalizeConcurrencyTest {
                 ownershipService,
                 sessionService,
                 questionService,
-                finalizeLockService
+                finalizeLockService,
+                runtimeSnapshotService,
+                runtimeRehydrateService
         );
         ReflectionTestUtils.setField(service, "baseMapper", mapper);
 
