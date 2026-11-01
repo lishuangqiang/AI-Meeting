@@ -412,11 +412,11 @@ public class InterviewSessionRuntimeRehydrateService {
     }
 
     private void writeFlow(String sessionId, InterviewFlowState flow) {
-        String key = InterviewCacheKeys.flow(sessionId);
-        stringRedisTemplate.delete(key);
         if (flow == null) {
             return;
         }
+        // restoreInterviewFlow 内部为 EXISTS 原子守护：仅在 flow 缺失时写入，
+        // 已存在时保留当前运行态，禁止盲写覆盖并发推进。
         interviewQuestionCacheService.restoreInterviewFlow(sessionId, flow);
     }
 

@@ -2,6 +2,8 @@ package com.hewei.hzyjy.xunzhi.interview.flow.answer;
 
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 import com.hewei.hzyjy.xunzhi.agent.application.BusinessAgentResolver;
 import com.hewei.hzyjy.xunzhi.agent.application.BusinessAgentScene;
 import com.hewei.hzyjy.xunzhi.agent.dao.entity.AgentPropertiesDO;
@@ -9,6 +11,7 @@ import com.hewei.hzyjy.xunzhi.interview.api.io.req.InterviewAnswerReqDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.InterviewAnswerRespDTO;
 import com.hewei.hzyjy.xunzhi.interview.shared.InterviewResponseParser;
 import com.hewei.hzyjy.xunzhi.interview.application.flow.InterviewFlowStateMachine;
+import com.hewei.hzyjy.xunzhi.interview.application.flow.InterviewFlowStatus;
 import com.hewei.hzyjy.xunzhi.interview.application.guard.core.InterviewAiGuardException;
 import com.hewei.hzyjy.xunzhi.interview.application.runtime.InterviewRuntimeRehydrateScope;
 import com.hewei.hzyjy.xunzhi.interview.application.runtime.InterviewSessionRuntimeRehydrateService;
@@ -18,6 +21,8 @@ import com.hewei.hzyjy.xunzhi.interview.application.rule.InterviewFollowUpRuleCo
 import com.hewei.hzyjy.xunzhi.interview.application.rule.InterviewFollowUpRuleDecision;
 import com.hewei.hzyjy.xunzhi.interview.application.rule.InterviewFollowUpRuleService;
 import com.hewei.hzyjy.xunzhi.interview.service.InterviewQuestionCacheService;
+import com.hewei.hzyjy.xunzhi.interview.service.model.AnswerCommitRequest;
+import com.hewei.hzyjy.xunzhi.interview.service.model.AnswerCommitResult;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewFlowState;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewRuntimeLoadMode;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewTurnLog;
@@ -49,7 +54,6 @@ public class InterviewAnswerPipeline {
     private final InterviewAnswerIdempotencyService interviewAnswerIdempotencyService;
     private final InterviewQuestionLockService interviewQuestionLockService;
     private final InterviewFollowUpRuleService interviewFollowUpRuleService;
-    private final InterviewTurnRepairService interviewTurnRepairService;
     private final InterviewSessionRuntimeSnapshotService runtimeSnapshotService;
     private final InterviewSessionRuntimeRehydrateService runtimeRehydrateService;
 
@@ -72,7 +76,7 @@ public class InterviewAnswerPipeline {
             }
             // 4) 读取当前题与 flow，拒绝过期题号。
             if (!stepLoadCurrentQuestion(ctx)) {
-                return finishAndReturn(ctx, false);
+                return finishAndReturn(ctx);
             }
             // 5) 以“当前题号”为粒度加锁，串行化同题并发提交。
             if (!stepAcquireQuestionLock(ctx)) {
@@ -86,11 +90,11 @@ public class InterviewAnswerPipeline {
             if (!stepEvaluateAndScore(ctx)) {
                 return ctx.response;
             }
-            // 8) 推进 flow、提交分数并组装下一题/结束态响应。
+            // 8) 一次 Lua 原子提交：flow 推进、计分、轮次与幂等记录同生共死。
             if (!stepAdvanceFlowAndAssemble(ctx)) {
                 return ctx.response;
             }
-            return finishAndReturn(ctx, true);
+            return finishAndReturn(ctx);
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             log.warn("Interrupted while executing interview answer pipeline, sessionId: {}", sessionId);
@@ -109,16 +113,15 @@ public class InterviewAnswerPipeline {
         }
     }
 
-    private InterviewAnswerRespDTO finishAndReturn(InterviewAnswerPipelineContext ctx, boolean appendTurn) {
+    private InterviewAnswerRespDTO finishAndReturn(InterviewAnswerPipelineContext ctx) {
         if (Boolean.TRUE.equals(ctx.response.getIsSuccess())) {
-            if (appendTurn && !stepAppendTurnLog(ctx)) {
-                interviewTurnRepairService.enqueue(ctx.sessionId, ctx.turnLog, "append_failed_before_mark_succeeded");
-            }
-            interviewAnswerIdempotencyService.markSucceeded(ctx.sessionId, ctx.requestId, ctx.response);
-            ctx.idempotencyMarkedSucceeded = true;
+            // 轮次日志已由原子提交 Lua 脚本写入 Redis；此处仅刷新运行时快照。
             if (ctx.turnLog != null) {
                 runtimeSnapshotService.refreshAfterAnswerCommitted(ctx.sessionId, ctx.requestId, ctx.turnLog);
             }
+            // 幂等回放由 committedRecords 承担，这里只清理 in-flight 围栏。
+            interviewAnswerIdempotencyService.clearProcessing(ctx.sessionId, ctx.requestId);
+            ctx.idempotencyMarkedSucceeded = true;
         }
         return ctx.response;
     }
@@ -144,6 +147,10 @@ public class InterviewAnswerPipeline {
     }
 
     private void normalizeRequestId(InterviewAnswerPipelineContext ctx) {
+        // 指纹：答案内容摘要，用于幂等记录的内容绑定，防止 requestId 复用串内容。
+        String answerContent = ctx.requestParam.getAnswerContent() == null
+                ? "" : ctx.requestParam.getAnswerContent().trim();
+        ctx.answerDigest = DigestUtil.sha256Hex(answerContent);
         String requestId = ctx.requestParam.getRequestId();
         if (StrUtil.isBlank(requestId)) {
             String seed = ctx.sessionId + "|" + ctx.requestParam.getQuestionNumber().trim() + "|" + ctx.requestParam.getAnswerContent();
@@ -158,20 +165,25 @@ public class InterviewAnswerPipeline {
 
     private boolean stepIdempotency(InterviewAnswerPipelineContext ctx) {
         InterviewAnswerIdempotencyService.TryStartResult tryStartResult =
-                interviewAnswerIdempotencyService.tryStart(ctx.sessionId, ctx.requestId);
+                interviewAnswerIdempotencyService.tryStart(
+                        ctx.sessionId,
+                        ctx.requestId,
+                        ctx.requestParam.getQuestionNumber(),
+                        ctx.answerDigest
+                );
         switch (tryStartResult.getStatus()) {
             case SUCCEEDED -> {
-                InterviewAnswerRespDTO replayResponse = tryStartResult.getReplayResponse();
-                if (replayResponse != null) {
-                    Metrics.counter("idempotency_replay_hit_total").increment();
-                    ctx.response = replayResponse;
-                    return false;
-                }
-                ctx.response.fail(PROCESSING_MESSAGE);
+                Metrics.counter("idempotency_replay_hit_total").increment();
+                InterviewAnswerRespDTO replayResponse = buildReplayResponse(tryStartResult.getReplayRecordJson());
+                ctx.response = replayResponse != null ? replayResponse : ctx.response.fail(PROCESSING_MESSAGE);
                 return false;
             }
             case PROCESSING -> {
                 ctx.response.fail(PROCESSING_MESSAGE);
+                return false;
+            }
+            case FINGERPRINT_MISMATCH -> {
+                ctx.response.fail("requestId already committed with different content");
                 return false;
             }
             case NEW -> {
@@ -183,7 +195,7 @@ public class InterviewAnswerPipeline {
                         ctx.requestParam.getAnswerContent()
                 );
                 if (replayResponse != null) {
-                    interviewAnswerIdempotencyService.markSucceeded(ctx.sessionId, ctx.requestId, replayResponse);
+                    interviewAnswerIdempotencyService.clearProcessing(ctx.sessionId, ctx.requestId);
                     ctx.idempotencyMarkedSucceeded = true;
                     ctx.response = replayResponse;
                     return false;
@@ -332,12 +344,22 @@ public class InterviewAnswerPipeline {
     }
 
     private boolean stepAdvanceFlowAndAssemble(InterviewAnswerPipelineContext ctx) {
-        // 1) 先拍快照：后续若计分提交失败，用于补偿回滚 flow，避免“题号推进成功但分数未入账”。
-        InterviewFlowState flowSnapshotBeforeAdvance = snapshotFlowState(interviewFlowStateMachine.current(ctx.sessionId));
+        // 1) 读取当前 flow（moveToEvaluating 之后的最新版本），作为原子提交的 CAS 期望值。
+        InterviewFlowState flow = interviewFlowStateMachine.current(ctx.sessionId);
+        if (flow == null) {
+            ctx.response.fail("interview flow not initialized");
+            return false;
+        }
+        int expectedVersion = flow.getVersion() == null ? 0 : flow.getVersion();
+        int currentIndex = flow.getCurrentIndex() == null ? 0 : flow.getCurrentIndex();
+        int totalQuestions = flow.getTotalQuestions() == null ? 0 : flow.getTotalQuestions();
+        int maxFollowUp = flow.getMaxFollowUp() == null ? 2 : flow.getMaxFollowUp();
+
+        // 2) 追问规则决策。
         InterviewFollowUpRuleDecision ruleDecision = decideFollowUp(ctx);
         int resolvedMaxFollowUp = ruleDecision != null && ruleDecision.getResolvedMaxFollowUp() > 0
                 ? ruleDecision.getResolvedMaxFollowUp()
-                : ctx.maxFollowUp;
+                : maxFollowUp;
         boolean needFollowUp = ruleDecision != null
                 ? ruleDecision.isNeedFollowUp()
                 : Boolean.TRUE.equals(ctx.followUpNeeded);
@@ -356,8 +378,19 @@ public class InterviewAnswerPipeline {
                 ruleDecision != null && ruleDecision.isFallback()
         );
 
-        // 2) 按规则优先走追问分支；追问生成失败则自动回落到主问题推进分支。
-        if (needFollowUp && ctx.currentFollowUpCount < resolvedMaxFollowUp) {
+        // 3) 计算提交后的 flow 与下一题信息（全部在 Lua 之前确定，Lua 只负责原子落账）。
+        // 默认值仅用于满足确定赋值分析，实际值必然由下方两个分支之一完整覆盖。
+        String nextStatus = null;
+        int nextIndex = 0;
+        String nextQuestionNumber = null;
+        String nextQuestion = null;
+        boolean nextFinished = false;
+        boolean nextIsFollowUp = false;
+        int nextFollowUpCount = 0;
+
+        int currentFollowUpCount = ctx.currentFollowUpCount == null ? 0 : ctx.currentFollowUpCount;
+        boolean followUpBranch = false;
+        if (needFollowUp && currentFollowUpCount < resolvedMaxFollowUp) {
             InterviewFollowUpService.FollowUpQuestionResult followUpQuestionResult = interviewFollowUpService.generateFollowUpQuestion(
                     ctx.sessionId,
                     ctx.requestId,
@@ -365,7 +398,7 @@ public class InterviewAnswerPipeline {
                     ctx.currentQuestion,
                     ctx.requestParam.getAnswerContent(),
                     ctx.followUpQuestion,
-                    ctx.currentFollowUpCount,
+                    currentFollowUpCount,
                     resolvedMaxFollowUp
             );
             if (followUpQuestionResult.hasQuestion()) {
@@ -374,104 +407,169 @@ public class InterviewAnswerPipeline {
                         followUpQuestionResult.getQuestionNumber(),
                         followUpQuestionResult.getQuestionContent()
                 );
-                InterviewFlowState followUpFlow = interviewFlowStateMachine.startFollowUpQuestion(
-                        ctx.sessionId,
-                        followUpQuestionResult.getQuestionNumber()
-                );
-                Integer nextFollowUpCount = followUpFlow != null && followUpFlow.getFollowUpCount() != null
-                        ? followUpFlow.getFollowUpCount()
-                        : followUpQuestionResult.getFollowUpCount();
-                if (!commitScoreAtSuccess(ctx)) {
-                    rollbackFlowAfterCommitFailure(ctx, flowSnapshotBeforeAdvance, "followup");
+                nextStatus = InterviewFlowStatus.FOLLOW_UP.name();
+                nextIndex = currentIndex;
+                nextQuestionNumber = followUpQuestionResult.getQuestionNumber();
+                nextQuestion = followUpQuestionResult.getQuestionContent();
+                nextFinished = false;
+                nextIsFollowUp = true;
+                nextFollowUpCount = currentFollowUpCount + 1;
+                followUpBranch = true;
+            }
+        }
+
+        if (!followUpBranch) {
+            // 追问生成失败或无追问：推进主问题；到末题则直接进入完成态（由 Lua 原子写入 COMPLETED）。
+            int nextIdx = currentIndex + 1;
+            if (totalQuestions <= 0 || nextIdx >= totalQuestions) {
+                nextStatus = InterviewFlowStatus.COMPLETED.name();
+                nextIndex = currentIndex;
+                nextQuestionNumber = null;
+                nextQuestion = null;
+                nextFinished = true;
+                nextIsFollowUp = false;
+                nextFollowUpCount = 0;
+            } else {
+                String mainNextNumber = String.valueOf(nextIdx + 1);
+                String mainNextQuestion = getQuestionWithReload(ctx.sessionId, mainNextNumber);
+                if (StrUtil.isBlank(mainNextQuestion)) {
+                    ctx.response.fail("next question does not exist or expired");
                     return false;
                 }
-                ctx.response.withNextQuestion(
-                        followUpQuestionResult.getQuestionNumber(),
-                        followUpQuestionResult.getQuestionContent(),
-                        true,
-                        nextFollowUpCount
-                ).success();
+                nextStatus = InterviewFlowStatus.ASKING.name();
+                nextIndex = nextIdx;
+                nextQuestionNumber = mainNextNumber;
+                nextQuestion = mainNextQuestion;
+                nextFinished = false;
+                nextIsFollowUp = false;
+                nextFollowUpCount = 0;
+            }
+        }
+
+        // 4) 构建轮次日志（totalScore 为占位值，由 Lua 按最终 avg 修正后写入）。
+        Integer currentTotalScore = interviewQuestionCacheService.getSessionTotalScore(ctx.sessionId);
+        InterviewTurnLog turn = buildTurnLog(ctx, nextQuestionNumber, nextQuestion, nextFinished, currentTotalScore);
+        ctx.turnLog = turn;
+
+        // 5) 一次 Lua 原子提交：flow CAS 推进 + 分数聚合 + 轮次 + 幂等记录，全部或全不。
+        AnswerCommitRequest request = AnswerCommitRequest.builder()
+                .sessionId(ctx.sessionId)
+                .requestId(ctx.requestId)
+                .questionNumber(ctx.requestParam.getQuestionNumber())
+                .answerDigest(ctx.answerDigest)
+                .shouldScore(!Boolean.TRUE.equals(ctx.currentIsFollowUp))
+                .score(ctx.score == null ? 0 : ctx.score)
+                .expectedVersion(expectedVersion)
+                .status(nextStatus)
+                .currentIndex(nextIndex)
+                .currentQuestionNumber(nextQuestionNumber)
+                .totalQuestions(totalQuestions)
+                .followUpCount(nextFollowUpCount)
+                .maxFollowUp(maxFollowUp)
+                .feedback(ctx.response.getFeedback())
+                .nextQuestionNumber(nextQuestionNumber)
+                .nextQuestion(nextQuestion)
+                .finished(nextFinished)
+                .isFollowUp(nextIsFollowUp)
+                .currentTotalScore(currentTotalScore)
+                .turnPayload(JSON.toJSONString(turn))
+                .build();
+        AnswerCommitResult commit = interviewQuestionCacheService.commitAnswerAtomically(request);
+        switch (commit.getCode()) {
+            case COMMITTED -> {
+                Integer committedTotal = commit.getTotalScore() == null ? currentTotalScore : commit.getTotalScore();
+                ctx.totalScore = committedTotal;
+                ctx.turnLog.setTotalScore(committedTotal);
+                ctx.response.setTotalScore(committedTotal);
+                if (nextFinished) {
+                    ctx.response.finish().success();
+                } else {
+                    ctx.response.withNextQuestion(nextQuestionNumber, nextQuestion, nextIsFollowUp, nextFollowUpCount).success();
+                }
                 return true;
             }
-        }
-
-        // 3) 无追问时推进主问题；到末题则标记完成并返回 finish。
-        InterviewFlowState nextFlow = interviewFlowStateMachine.advanceMainQuestion(ctx.sessionId);
-        if (nextFlow == null || interviewFlowStateMachine.isCompleted(nextFlow)) {
-            interviewFlowStateMachine.markCompleted(ctx.sessionId);
-            if (!commitScoreAtSuccess(ctx)) {
-                rollbackFlowAfterCommitFailure(ctx, flowSnapshotBeforeAdvance, "finish");
+            case REPLAYED -> {
+                // 并发下他方已提交同一 requestId：从提交记录重建响应，不再重复提交。
+                InterviewAnswerRespDTO replay = buildReplayResponse(
+                        interviewQuestionCacheService.findCommittedAnswerRecord(ctx.sessionId, ctx.requestId));
+                if (replay == null) {
+                    ctx.response.fail("answer already committed but replay record unavailable");
+                    return false;
+                }
+                ctx.response = replay;
                 return false;
             }
-            ctx.response.finish().success();
-            return true;
-        }
-
-        String nextQuestionNumber = interviewFlowStateMachine.currentQuestionNumber(nextFlow);
-        String nextQuestion = getQuestionWithReload(ctx.sessionId, nextQuestionNumber);
-        if (StrUtil.isBlank(nextQuestion)) {
-            ctx.response.fail("next question does not exist or expired");
-            return false;
-        }
-
-        if (!commitScoreAtSuccess(ctx)) {
-            rollbackFlowAfterCommitFailure(ctx, flowSnapshotBeforeAdvance, "next_main");
-            return false;
-        }
-        ctx.response.withNextQuestion(nextQuestionNumber, nextQuestion, false, 0).success();
-        return true;
-    }
-
-    private boolean commitScoreAtSuccess(InterviewAnswerPipelineContext ctx) {
-        try {
-            // 追问不计入总分；仅主问题在“返回成功前”提交入账，避免失败重试重复计分。
-            Integer committedTotalScore = Boolean.TRUE.equals(ctx.currentIsFollowUp)
-                    ? interviewQuestionCacheService.getSessionTotalScore(ctx.sessionId)
-                    : interviewQuestionCacheService.addSessionScore(ctx.sessionId, ctx.score);
-            ctx.totalScore = committedTotalScore;
-            ctx.response.setTotalScore(committedTotalScore);
-            return true;
-        } catch (Exception ex) {
-            log.error("Failed to commit interview score, sessionId={}, requestId={}", ctx.sessionId, ctx.requestId, ex);
-            recordAnswerPipelineFailure("score_commit_failed");
-            ctx.response.fail("failed to commit interview score");
-            return false;
+            case VERSION_CONFLICT -> {
+                Metrics.counter("stale_question_reject_total").increment();
+                recordAnswerPipelineFailure("stale_question_reject_atomic_commit");
+                ctx.response.fail(STALE_QUESTION_MESSAGE);
+                return false;
+            }
+            default -> {
+                // INVALID_ARGUMENT / FINGERPRINT_MISMATCH / CORRUPT_RECORD：fail closed，零副作用。
+                recordAnswerPipelineFailure("atomic_commit_" + commit.getCode().name().toLowerCase());
+                ctx.response.fail("failed to commit interview answer: " + commit.getCode().name());
+                return false;
+            }
         }
     }
 
-    private void rollbackFlowAfterCommitFailure(
+    private InterviewTurnLog buildTurnLog(
             InterviewAnswerPipelineContext ctx,
-            InterviewFlowState flowSnapshotBeforeAdvance,
-            String branch) {
-        if (flowSnapshotBeforeAdvance == null) {
-            return;
-        }
-        try {
-            // 分数提交失败时，恢复到推进前状态，保证客户端重试仍能命中当前题。
-            interviewQuestionCacheService.restoreInterviewFlow(ctx.sessionId, flowSnapshotBeforeAdvance);
-            Metrics.counter("answer_flow_rollback_total", "branch", StrUtil.blankToDefault(branch, "unknown")).increment();
-            log.warn("Rolled back interview flow after score commit failure, sessionId={}, requestId={}, branch={}",
-                    ctx.sessionId, ctx.requestId, branch);
-        } catch (Exception ex) {
-            log.error("Failed to rollback interview flow after score commit failure, sessionId={}, requestId={}, branch={}",
-                    ctx.sessionId, ctx.requestId, branch, ex);
-        }
+            String nextQuestionNumber,
+            String nextQuestion,
+            boolean finished,
+            Integer currentTotalScore) {
+        return InterviewTurnLog.builder()
+                .timestamp(System.currentTimeMillis())
+                .requestId(ctx.requestId)
+                .questionNumber(ctx.currentQuestionNumber)
+                .questionContent(ctx.currentQuestion)
+                .answerContent(truncateForLog(ctx.requestParam.getAnswerContent(), 1000))
+                .score(ctx.score)
+                .totalScore(currentTotalScore)
+                .feedback(ctx.response.getFeedback())
+                .followUpNeeded(ctx.followUpNeeded)
+                .isFollowUp(ctx.currentIsFollowUp)
+                .followUpCount(ctx.currentFollowUpCount)
+                .nextQuestionNumber(nextQuestionNumber)
+                .nextQuestion(nextQuestion)
+                .finished(finished)
+                .build();
     }
 
-    private InterviewFlowState snapshotFlowState(InterviewFlowState state) {
-        if (state == null) {
+    private InterviewAnswerRespDTO buildReplayResponse(String recordJson) {
+        if (StrUtil.isBlank(recordJson)) {
             return null;
         }
-        // 手动复制，避免后续对象被原地修改导致“快照”失效。
-        InterviewFlowState snapshot = new InterviewFlowState();
-        snapshot.setStatus(state.getStatus());
-        snapshot.setCurrentIndex(state.getCurrentIndex());
-        snapshot.setCurrentQuestionNumber(state.getCurrentQuestionNumber());
-        snapshot.setTotalQuestions(state.getTotalQuestions());
-        snapshot.setFollowUpCount(state.getFollowUpCount());
-        snapshot.setMaxFollowUp(state.getMaxFollowUp());
-        snapshot.setVersion(state.getVersion());
-        return snapshot;
+        try {
+            JSONObject record = JSON.parseObject(recordJson);
+            if (record == null) {
+                return null;
+            }
+            InterviewAnswerRespDTO replay = InterviewAnswerRespDTO.init();
+            replay.withNextQuestion(
+                    record.getString("nextQuestionNumber"),
+                    record.getString("nextQuestion"),
+                    Boolean.TRUE.equals(record.getBoolean("isFollowUp")),
+                    record.getInteger("followUpCount")
+            );
+            replay.setScore(record.getInteger("score"));
+            replay.setFeedback(record.getString("feedback"));
+            replay.setTotalScore(record.getInteger("totalScore"));
+            JSONObject turn = record.getJSONObject("turnPayload");
+            if (turn != null) {
+                replay.withCurrentQuestion(turn.getString("questionNumber"), turn.getString("questionContent"));
+            }
+            if (Boolean.TRUE.equals(record.getBoolean("finished"))) {
+                replay.finish();
+            }
+            replay.success();
+            return replay;
+        } catch (Exception ex) {
+            log.warn("Failed to build replay response from committed record", ex);
+            return null;
+        }
     }
 
     private InterviewFollowUpRuleDecision decideFollowUp(InterviewAnswerPipelineContext ctx) {
@@ -490,32 +588,6 @@ public class InterviewAnswerPipeline {
         ruleContext.setInterviewCompleted(Boolean.TRUE.equals(ctx.response.getFinished()));
         ctx.followUpRuleDecision = interviewFollowUpRuleService.decide(ruleContext);
         return ctx.followUpRuleDecision;
-    }
-
-    private boolean stepAppendTurnLog(InterviewAnswerPipelineContext ctx) {
-        try {
-            InterviewTurnLog turn = InterviewTurnLog.builder()
-                    .timestamp(System.currentTimeMillis())
-                    .requestId(ctx.requestId)
-                    .questionNumber(ctx.currentQuestionNumber)
-                    .questionContent(ctx.currentQuestion)
-                    .answerContent(truncateForLog(ctx.requestParam.getAnswerContent(), 1000))
-                    .score(ctx.score)
-                    .totalScore(ctx.totalScore)
-                    .feedback(ctx.response.getFeedback())
-                    .followUpNeeded(ctx.followUpNeeded)
-                    .isFollowUp(ctx.currentIsFollowUp)
-                    .followUpCount(ctx.currentFollowUpCount)
-                    .nextQuestionNumber(ctx.response.getNextQuestionNumber())
-                    .nextQuestion(ctx.response.getNextQuestion())
-                    .finished(ctx.response.getFinished())
-                    .build();
-            ctx.turnLog = turn;
-            return interviewQuestionCacheService.appendInterviewTurnIfAbsent(ctx.sessionId, turn);
-        } catch (Exception ex) {
-            log.warn("Failed to append interview turn, sessionId: {}", ctx.sessionId, ex);
-            return false;
-        }
     }
 
     private InterviewFlowState ensureInterviewFlow(String sessionId) {
@@ -648,6 +720,7 @@ public class InterviewAnswerPipeline {
         private InterviewAnswerReqDTO requestParam;
         private InterviewAnswerRespDTO response;
         private String requestId;
+        private String answerDigest;
         private InterviewFlowState flowState;
         private String currentQuestionNumber;
         private String currentQuestion;

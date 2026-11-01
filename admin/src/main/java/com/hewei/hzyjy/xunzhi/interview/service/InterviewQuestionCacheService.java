@@ -2,6 +2,8 @@ package com.hewei.hzyjy.xunzhi.interview.service;
 
 import com.hewei.hzyjy.xunzhi.interview.api.io.req.DemeanorScoreDTO;
 import com.hewei.hzyjy.xunzhi.interview.api.io.resp.RadarChartDTO;
+import com.hewei.hzyjy.xunzhi.interview.service.model.AnswerCommitRequest;
+import com.hewei.hzyjy.xunzhi.interview.service.model.AnswerCommitResult;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewFlowState;
 import com.hewei.hzyjy.xunzhi.interview.service.model.InterviewTurnLog;
 
@@ -250,10 +252,39 @@ public interface InterviewQuestionCacheService {
 
     /**
      * 恢复面试流程状态（补偿动作）。
+     * <p>
+     * 仅允许在 flow 缺失时初始化；flow 已存在时拒绝盲写覆盖，避免回退并发推进。
      * @param sessionId session id
      * @param flowState target flow state
      */
     void restoreInterviewFlow(String sessionId, InterviewFlowState flowState);
+
+    /**
+     * 答题原子提交：flow 版本 CAS 推进、分数聚合（sum/count/avg）、轮次日志追加、
+     * 幂等提交记录写入与全键 TTL 刷新，全部在一个 Redis Lua 事务内完成。
+     * <p>
+     * 兼容迁移说明：旧键名（无 hash tag）会话的分数聚合在提交前以单键条件 SET 播种
+     * （含发布前提：旧实例须先停止写入旧键，见实现注释）；轮次与 flow 的旧键迁移分别在
+     * 读路径完成（读时合并 / EXISTS 守护写入），均不进入本多键脚本（Cluster CROSSSLOT 约束）。
+     * @param request 提交参数
+     * @return 提交结果（含返回码与提交后的 flow/分数快照）
+     */
+    AnswerCommitResult commitAnswerAtomically(AnswerCommitRequest request);
+
+    /**
+     * 查询已提交的答题记录（幂等预检与回放用）。
+     * @param sessionId session id
+     * @param requestId 幂等键
+     * @return 提交记录 JSON，未提交时返回 null
+     */
+    String findCommittedAnswerRecord(String sessionId, String requestId);
+
+    /**
+     * 清空会话运行态（重新出题/重置时调用）：flow、分数聚合、轮次、幂等提交记录、
+     * 追问题目与去重集合一并清理，避免旧提交记录被错误回放。
+     * @param sessionId session id
+     */
+    void clearSessionRuntime(String sessionId);
 
     /**
      * Record request id for idempotency.

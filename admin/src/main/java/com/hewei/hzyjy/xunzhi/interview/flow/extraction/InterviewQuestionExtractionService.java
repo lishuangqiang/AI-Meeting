@@ -235,6 +235,11 @@ public class InterviewQuestionExtractionService {
                 return false;
             }
 
+            // 重新出题：先统一清理会话运行态（flow/分数/轮次/幂等提交记录/追问题目），
+            // 再写入新题库与初始化新 flow；否则旧提交记录会被同 requestId 错误回放。
+            // 当前位于会话级重锁（heavyLock）内。
+            interviewQuestionCacheService.clearSessionRuntime(reqDTO.getSessionId());
+
             interviewQuestionCacheService.cacheInterviewQuestions(reqDTO.getSessionId(), questions);
             Map<String, String> questionMap =
                     interviewQuestionCacheService.getSessionInterviewQuestions(reqDTO.getSessionId());
@@ -281,7 +286,6 @@ public class InterviewQuestionExtractionService {
 
             // 结构化二次落库用于 Redis 丢失后的恢复来源，避免报告阶段出现字段缺失。
             persistStructuredFields(reqDTO, questions, suggestions, resumeScore, interviewType, resumeContext);
-            interviewQuestionCacheService.resetSessionScore(reqDTO.getSessionId());
             log.info("Session score reset, sessionId={}", reqDTO.getSessionId());
             return true;
         } catch (Exception cacheException) {

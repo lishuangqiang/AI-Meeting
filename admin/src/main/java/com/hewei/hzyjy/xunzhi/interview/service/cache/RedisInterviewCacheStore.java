@@ -36,7 +36,11 @@ public class RedisInterviewCacheStore implements InterviewCacheStore {
 
     @Override
     public void deleteKeys(Collection<String> keys) {
-        stringRedisTemplate.delete(keys);
+        // Redis Cluster 下多键 DEL 要求同 slot；调用方可能混入不同 slot 的键（新旧键形制并存），
+        // 逐个删除保证兼容。
+        for (String key : keys) {
+            stringRedisTemplate.delete(key);
+        }
     }
 }
 

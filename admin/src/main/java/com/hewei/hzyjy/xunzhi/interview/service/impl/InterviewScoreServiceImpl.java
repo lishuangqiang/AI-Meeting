@@ -45,6 +45,12 @@ public class InterviewScoreServiceImpl implements InterviewScoreService {
         }
 
         Integer cachedAverage = parseInteger(interviewCacheStore.getValue(InterviewCacheKeys.sessionScore(sessionId)));
+        if (cachedAverage == null) {
+            // 旧键名（无 hash tag）兼容迁移：仅回读旧 avg 用于展示；
+            // 权威迁移（sum/count/avg）由原子提交 Lua 在下次计分时完成，避免与 INCRBY 竞态。
+            cachedAverage = parseInteger(
+                    stringRedisTemplate.opsForValue().get(InterviewCacheKeys.legacySessionScore(sessionId)));
+        }
         if (cachedAverage != null) {
             return scoreAggregatorStrategy.clampScore(cachedAverage);
         }
@@ -53,6 +59,12 @@ public class InterviewScoreServiceImpl implements InterviewScoreService {
         return derivedAverage != null ? derivedAverage : 0;
     }
 
+    /**
+     * 累加会话分数。
+     * <p>
+     * 仅非提交路径使用：答题提交已统一走 {@code InterviewQuestionCacheService#commitAnswerAtomically}
+     * 的 Lua 原子事务（flow 推进 + 分数聚合同生共死），此方法及其非原子兜底不得再被提交链路引用。
+     */
     @Override
     public Integer addSessionScore(String sessionId, Integer score) {
         if (StrUtil.isBlank(sessionId)) {
@@ -99,7 +111,10 @@ public class InterviewScoreServiceImpl implements InterviewScoreService {
         interviewCacheStore.deleteKeys(List.of(
                 InterviewCacheKeys.sessionScore(sessionId),
                 InterviewCacheKeys.sessionScoreSum(sessionId),
-                InterviewCacheKeys.sessionScoreCount(sessionId)
+                InterviewCacheKeys.sessionScoreCount(sessionId),
+                InterviewCacheKeys.legacySessionScore(sessionId),
+                InterviewCacheKeys.legacySessionScoreSum(sessionId),
+                InterviewCacheKeys.legacySessionScoreCount(sessionId)
         ));
     }
 
