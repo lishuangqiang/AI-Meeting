@@ -28,10 +28,6 @@ public class SaTokenWebSocketAuthService implements WebSocketAuthService {
         if (tokenUsername == null) {
             return false;
         }
-        if (tokenUsername.equals(pathUserId)) {
-            return true;
-        }
-
         try {
             Long tokenUserId = currentUserService.getUserIdByUsername(tokenUsername);
             return tokenUserId != null && String.valueOf(tokenUserId).equals(pathUserId);

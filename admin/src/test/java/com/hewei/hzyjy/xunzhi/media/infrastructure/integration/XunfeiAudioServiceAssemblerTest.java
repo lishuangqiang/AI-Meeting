@@ -10,21 +10,33 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class XunfeiAudioServiceAssemblerTest {
 
     @Test
-    void noPgsPartial_ShouldReplaceCurrentLiveSnapshot() throws Exception {
+    void noPgsPartial_ShouldReplaceCurrentLiveSnapshotForSameSegment() throws Exception {
         Object assembler = newAssembler();
 
         apply(assembler, 1, null, null, 0, 1000, "A", false);
         assertEquals("A", buildSnapshot(assembler));
 
-        apply(assembler, 2, null, null, 1001, 2000, "AB", false);
+        apply(assembler, 1, null, null, 0, 2000, "AB", false);
         assertEquals("AB", buildSnapshot(assembler));
-        assertEquals("", buildCommittedText(assembler, 2, false));
+        assertEquals("", buildCommittedText(assembler, 1, false));
         assertEquals("AB", buildLiveText(assembler, "", "AB", "AB", false));
 
-        apply(assembler, 3, null, null, 2001, 3000, "ABC", false);
+        apply(assembler, 1, null, null, 0, 3000, "ABC", false);
         assertEquals("ABC", buildSnapshot(assembler));
-        assertEquals("", buildCommittedText(assembler, 3, false));
+        assertEquals("", buildCommittedText(assembler, 1, false));
         assertEquals("ABC", buildLiveText(assembler, "", "ABC", "ABC", false));
+    }
+
+    @Test
+    void noPgsIndependentSegments_ShouldPreserveNonOverlappingText() throws Exception {
+        Object assembler = newAssembler();
+
+        apply(assembler, 1, null, null, 0, 1000, "A", false);
+        apply(assembler, 2, null, null, 1001, 2000, "AB", false);
+
+        assertEquals("AAB", buildSnapshot(assembler));
+        assertEquals("A", buildCommittedText(assembler, 2, false));
+        assertEquals("AB", buildLiveText(assembler, "A", "AAB", "AB", false));
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.hewei.hzyjy.xunzhi.media.api;
 
+import cn.dev33.satoken.annotation.SaCheckRole;
 import com.hewei.hzyjy.xunzhi.media.application.WebSocketMessageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +18,7 @@ import java.util.Map;
  * REST endpoints for websocket status checks and server-side push.
  */
 @RestController
+@SaCheckRole("admin")
 @RequestMapping("/api/xunzhi/v1/websocket")
 @RequiredArgsConstructor
 public class WebSocketController {

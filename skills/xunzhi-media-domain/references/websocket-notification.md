@@ -2,6 +2,8 @@
 
 ## 服务端推送接口
 
+以下 REST 管理接口统一要求 `admin` 角色，普通用户不能向自己或其他用户发送系统推送，也不能查询其他用户在线状态。业务代码使用 `WebSocketMessageService` 内部推送，无需调用 REST 管理接口。目标 `userId` 与 WebSocket 连接一致，使用数字用户 ID。
+
 - 在线状态：`GET /api/xunzhi/v1/websocket/user/{userId}/status`
 - 发送自定义消息：`POST /api/xunzhi/v1/websocket/send-message`
 - 发送系统通知：`POST /api/xunzhi/v1/websocket/notification/{userId}`

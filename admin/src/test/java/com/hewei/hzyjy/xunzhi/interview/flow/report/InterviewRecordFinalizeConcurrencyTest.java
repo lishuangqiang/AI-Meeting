@@ -1,5 +1,7 @@
 package com.hewei.hzyjy.xunzhi.interview.flow.report;
 
+import com.hewei.hzyjy.xunzhi.interview.application.runtime.InterviewSessionRuntimeSnapshotService;
+import com.hewei.hzyjy.xunzhi.interview.application.runtime.InterviewSessionRuntimeRehydrateService;
 import com.hewei.hzyjy.xunzhi.common.convention.exception.ClientException;
 import com.hewei.hzyjy.xunzhi.interview.application.InterviewSessionOwnershipService;
 import com.hewei.hzyjy.xunzhi.interview.application.finalize.InterviewFinalizeLockService;
@@ -51,7 +53,9 @@ class InterviewRecordFinalizeConcurrencyTest {
                 ownershipService,
                 sessionService,
                 questionService,
-                finalizeLockService
+                finalizeLockService,
+                mock(InterviewSessionRuntimeSnapshotService.class),
+                mock(InterviewSessionRuntimeRehydrateService.class)
         );
         ReflectionTestUtils.setField(service, "baseMapper", mapper);
 

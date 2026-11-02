@@ -108,7 +108,8 @@ AI-Meeting（码上面试平台）是我们项目的开源前身。在此基础�
 
 - **Sa-Token 认证**：基于 Sa-Token 实现登录 / 注册 / 登出，Token 持久化至 Redis 支持多实例共享登录态。
 - **角色权限控制**：支持管理员角色分配，管理员接口通过 `@SaCheckRole` 注解鉴权。
-- **WebSocket 鉴权**：WebSocket 连接建立时通过 Token 参数校验用户身份，支持多参数名兼容（token / Authorization / access_token）。
+- **WebSocket 鉴权**：WebSocket 连接建立时通过 Token 参数校验用户身份，支持多参数名兼容（token / Authorization / access_token）。连接路径 `/api/xunzhi/v1/xunfei/audio-to-text/{userId}` 必须使用 Token 对应用户的数字 ID，不再接受用户名。
+- **WebSocket 管理接口**：`/api/xunzhi/v1/websocket/**` 的在线状态查询与 REST 推送接口均要求管理员角色；业务代码通过 `WebSocketMessageService` 进行内部推送。
 
 ## 简历写法
 
