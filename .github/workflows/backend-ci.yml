@@ -37,4 +37,4 @@ jobs:
         run: chmod +x ./mvnw
 
       - name: Verify repository
-        run: ./mvnw -B -ntp clean verify -Dmaven.test.skip=true
+        run: ./mvnw -B -ntp clean verify

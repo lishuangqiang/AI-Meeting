@@ -1,5 +1,7 @@
 package com.hewei.hzyjy.xunzhi.interview.service.impl;
 
+import com.hewei.hzyjy.xunzhi.interview.application.runtime.InterviewSessionRuntimeSnapshotService;
+import com.hewei.hzyjy.xunzhi.interview.application.runtime.InterviewSessionRuntimeRehydrateService;
 import com.hewei.hzyjy.xunzhi.interview.application.InterviewSessionOwnershipService;
 import com.hewei.hzyjy.xunzhi.interview.application.finalize.InterviewFinalizeLockService;
 import com.hewei.hzyjy.xunzhi.interview.dao.entity.InterviewRecordDO;
@@ -26,13 +28,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class InterviewRecordServiceImplTest {
 
     @Test
-    void shouldFinishInterviewSessionBeforePersistingRecordFromRedis() throws Exception {
+    void shouldPersistFinalRecordAfterFinishingInterviewSession() throws Exception {
         InterviewQuestionCacheService cacheService = mock(InterviewQuestionCacheService.class);
         InterviewSessionOwnershipService ownershipService = mock(InterviewSessionOwnershipService.class);
         InterviewSessionService sessionService = mock(InterviewSessionService.class);
@@ -44,7 +47,9 @@ class InterviewRecordServiceImplTest {
                 ownershipService,
                 sessionService,
                 questionService,
-                finalizeLockService
+                finalizeLockService,
+                mock(InterviewSessionRuntimeSnapshotService.class),
+                mock(InterviewSessionRuntimeRehydrateService.class)
         );
         ReflectionTestUtils.setField(service, "baseMapper", mapper);
 
@@ -94,16 +99,14 @@ class InterviewRecordServiceImplTest {
         existingRecord.setUserId(1001L);
         existingRecord.setSessionId("interview-session-1");
         existingRecord.setCreateTime(new Date(System.currentTimeMillis() - 30_000));
-        when(mapper.selectOne(any())).thenReturn(null, null, existingRecord);
+        when(mapper.selectOne(any())).thenReturn(null, existingRecord);
         when(mapper.insert(any(InterviewRecordDO.class))).thenReturn(1);
         when(mapper.updateById(any(InterviewRecordDO.class))).thenReturn(1);
 
         service.saveInterviewRecordFromRedis("interview-session-1", 1001L);
 
         InOrder inOrder = inOrder(ownershipService, mapper, sessionService);
-        inOrder.verify(ownershipService).requireOwnedSession("interview-session-1", 1001L);
-        inOrder.verify(mapper).selectOne(any());
-        inOrder.verify(ownershipService).requireOwnedSession("interview-session-1", 1001L);
+        inOrder.verify(ownershipService, times(2)).requireOwnedSession("interview-session-1", 1001L);
         inOrder.verify(mapper).selectOne(any());
         inOrder.verify(mapper).insert(any(InterviewRecordDO.class));
         inOrder.verify(sessionService).finishSession("interview-session-1", 1001L);
