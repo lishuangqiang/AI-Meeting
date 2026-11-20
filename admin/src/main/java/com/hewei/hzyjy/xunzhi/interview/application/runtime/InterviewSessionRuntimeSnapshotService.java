@@ -151,11 +151,18 @@ public class InterviewSessionRuntimeSnapshotService {
     }
 
     public List<InterviewTurnLog> loadPersistedTurns(String sessionId) {
+        return loadPersistedTurns(sessionId, null);
+    }
+
+    List<InterviewTurnLog> loadPersistedTurns(String sessionId, InterviewSessionRuntimeSnapshot recoverySnapshot) {
         if (StrUtil.isBlank(sessionId)) {
             return new ArrayList<>();
         }
         List<InterviewSessionTurnArchive> archives = loadTurnArchives(sessionId);
         if (archives != null && !archives.isEmpty()) {
+            if (recoverySnapshot != null) {
+                applyArchivedProgress(recoverySnapshot, archives);
+            }
             return archives.stream()
                     .map(InterviewSessionTurnArchive::getTurnPayload)
                     .filter(item -> item != null)
@@ -169,6 +176,63 @@ public class InterviewSessionRuntimeSnapshotService {
                 .map(InterviewSessionRuntimeSnapshot::getRecentTurns)
                 .map(ArrayList::new)
                 .orElseGet(ArrayList::new);
+    }
+
+    private void applyArchivedProgress(InterviewSessionRuntimeSnapshot snapshot, List<InterviewSessionTurnArchive> archives) {
+        Long watermark = snapshot.getArchiveWatermark() == null ? snapshot.getLastTurnSeq() : snapshot.getArchiveWatermark();
+        if (watermark == null) {
+            return;
+        }
+        InterviewFlowState flow = snapshot.getFlow();
+        int totalQuestions = snapshot.getQuestions() == null ? 0 : snapshot.getQuestions().size();
+        if (flow != null && flow.getTotalQuestions() != null) {
+            totalQuestions = flow.getTotalQuestions();
+        }
+        InterviewRuntimeScoreAggregate scores = snapshot.getScoreAggregate();
+        if (scores == null) {
+            scores = emptyScoreAggregate();
+        }
+        for (InterviewSessionTurnArchive archive : archives) {
+            InterviewTurnLog turn = archive.getTurnPayload();
+            if (archive.getSeq() == null || archive.getSeq() <= watermark || turn == null) {
+                continue;
+            }
+            if ((flow == null || !flow.isCompleted()) && snapshot.getRebuildConfidence() != InterviewRuntimeConfidence.TERMINAL) {
+                InterviewFlowState next = deriveFlowFromTurns(List.of(turn), totalQuestions);
+                if (flow != null && next != null) {
+                    next.setMaxFollowUp(flow.getMaxFollowUp());
+                    next.setVersion(flow.getVersion() == null ? 1 : flow.getVersion() + 1);
+                }
+                flow = next;
+                snapshot.setFlow(flow);
+            }
+            if (turn.getScore() != null && !Boolean.TRUE.equals(turn.getIsFollowUp())) {
+                scores.setScoreSum(Objects.requireNonNullElse(scores.getScoreSum(), 0) + clampScore(turn.getScore()));
+                scores.setScoreCount(Objects.requireNonNullElse(scores.getScoreCount(), 0) + 1);
+            }
+            if (turn.getTotalScore() != null) {
+                scores.setTotalScore(turn.getTotalScore());
+            }
+            snapshot.setScoreAggregate(scores);
+            String nextQuestion = normalizeQuestionNumber(turn.getNextQuestionNumber());
+            if (isFollowUpQuestion(nextQuestion) && StrUtil.isNotBlank(turn.getNextQuestion())) {
+                if (snapshot.getFollowUpQuestions() == null) {
+                    snapshot.setFollowUpQuestions(new LinkedHashMap<>());
+                }
+                snapshot.getFollowUpQuestions().put(nextQuestion, turn.getNextQuestion().trim());
+            }
+            List<InterviewTurnLog> recent = snapshot.getRecentTurns() == null
+                    ? new ArrayList<>() : new ArrayList<>(snapshot.getRecentTurns());
+            appendCommittedTurnIfAbsent(recent, turn);
+            snapshot.setRecentTurns(limitRecentTurns(recent));
+            snapshot.setRecentTurnCount(snapshot.getRecentTurns().size());
+            snapshot.setLastCommittedQuestionNumber(normalizeQuestionNumber(turn.getQuestionNumber()));
+            snapshot.setLastCommittedTurnDigest(buildTurnDigest(turn.getQuestionNumber(), turn.getAnswerContent()));
+            snapshot.setLastAppliedRequestId(turn.getRequestId());
+            watermark = archive.getSeq();
+            snapshot.setArchiveWatermark(watermark);
+            snapshot.setLastTurnSeq(watermark);
+        }
     }
 
     public InterviewAnswerRespDTO findReplayResponse(

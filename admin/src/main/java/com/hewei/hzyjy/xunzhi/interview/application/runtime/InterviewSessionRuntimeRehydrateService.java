@@ -295,8 +295,8 @@ public class InterviewSessionRuntimeRehydrateService {
             return;
         }
         List<InterviewTurnLog> turns = Collections.emptyList();
-        if (scope.includesTurns() || scope.includesScore()) {
-            turns = runtimeSnapshotService.loadPersistedTurns(sessionId);
+        if (scope.includesFlow() || scope.includesTurns() || scope.includesScore()) {
+            turns = runtimeSnapshotService.loadPersistedTurns(sessionId, snapshot);
             if (turns == null || turns.isEmpty()) {
                 turns = snapshot.getRecentTurns();
             }
